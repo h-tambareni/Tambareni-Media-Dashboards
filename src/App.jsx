@@ -1,12 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { YouTubeLoginButton } from "./components/YouTubeLoginButton";
+import { isSupabaseConfigured } from "./lib/supabase";
+import {
+  fetchBrandsWithChannels,
+  createBrand as dbCreateBrand,
+  deleteBrand as dbDeleteBrand,
+  addChannelToBrand as dbAddChannelToBrand,
+  removeChannelFromBrand as dbRemoveChannelFromBrand,
+} from "./lib/supabaseDb";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
 
 const css = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
+.app, .app * { cursor: default; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; }
+.app input, .app textarea, .app select { cursor: text; user-select: text; -webkit-user-select: text; -moz-user-select: text; -ms-user-select: text; }
+.app button, .app .nav-item, .app .brand-item, .app .ibtn, .app .tbtn, .app .bcard, .app .pcard, .app .ptab, .app .addbtn, .app .pact { cursor: pointer; }
 :root {
   --bg: #080808; --surface: #111111; --surface2: #181818;
   --border: #1e1e1e; --border2: #2e2e2e;
@@ -154,10 +165,18 @@ const platEmoji = {instagram:"📸",youtube:"▶️",tiktok:"🎵"};
 const platColors = {instagram:"#c77dff",youtube:"#ff6b6b",tiktok:"#888"};
 const platMap = {ig:"instagram",yt:"youtube",tt:"tiktok"};
 
-function Overview({ onBrand }) {
+function Overview({ onBrand, getBrandNameForChannel, brandsFromDb }) {
   const [time, setTime] = useState("ALL TIME");
-  const { connectedHandles, channelData } = useYouTubeContext();
-  const brands = connectedHandles.map((h)=>channelData[h]).filter(Boolean);
+  const { channelData } = useYouTubeContext();
+  const allHandles = [...new Set((brandsFromDb||[]).flatMap(b=>b.handles))];
+  const brandsRaw = allHandles.map((h)=>({ handle: h, ...channelData[h] })).filter(b=>b.handle);
+  const seen = new Set();
+  const channels = brandsRaw.filter((b)=>{
+    const id = b.channel?.id || b.platform?.channelId || b.handle;
+    if (!id || seen.has(id)) return false;
+    seen.add(id); return true;
+  });
+  const brands = channels;
 
   const viewsData = (()=>{
     const byDate = {};
@@ -173,7 +192,7 @@ function Overview({ onBrand }) {
 
   const totalViews = brands.reduce((s,b)=>s+(b.totalViews||0),0);
   const totalFollowers = brands.reduce((s,b)=>s+(b.platform?.followers||0),0);
-  const allPosts = brands.flatMap(b=>(b.posts||[]).map(p=>({...p,_brand:b.platform?.handle})));
+  const allPosts = brands.flatMap(b=>(b.posts||[]).map(p=>({...p,_brand:getBrandNameForChannel?.(b)||b.platform?.handle})));
   const avgViews = allPosts.length?Math.round(allPosts.reduce((s,p)=>s+p.views,0)/allPosts.length):0;
   const totalEngagement = allPosts.reduce((s,p)=>s+(p.likes||0)+(p.cmts||0)+(p.shares||0),0);
 
@@ -272,8 +291,8 @@ function Overview({ onBrand }) {
         </div>
 
         <div className="sh" style={{marginBottom:12}}>
-          <span className="sht">CHANNELS</span>
-          <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text3)"}}>{brands.length} CONNECTED</span>
+          <span className="sht">BRANDS</span>
+          <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text3)"}}>{brands.length} connected</span>
         </div>
 
         <div className="bgrid">
@@ -283,15 +302,21 @@ function Overview({ onBrand }) {
               <div style={{fontSize:11}}>Go to <strong>Accounts</strong> → sync a YouTube channel to get started</div>
             </div>
           ) : brands.map(b=>{
-            const pf=b.platform; const short=(pf?.handle||"??").split(" ").slice(-1)[0].slice(0,2).toUpperCase();
+            const pf=b.platform; const thumb=pf?.thumbnail; const displayName=getBrandNameForChannel?.(b)||pf?.handle||b.handle||"??";
+            const navHandle = pf?.handle || b.handle;
+            const hasData = !!pf;
             return (
-            <div key={b.channel?.id} className="bcard" onClick={()=>onBrand(pf?.handle)}>
+            <div key={b.channel?.id || b.handle} className={`bcard${!hasData?" dead":""}`} onClick={()=>navHandle&&onBrand(navHandle)}>
               <div className="bcard-top">
                 <div style={{display:"flex",alignItems:"center",gap:9}}>
-                  <div className="b-avatar" style={{background:"#ff6b6b18",color:"#ff6b6b",border:"1px solid #ff6b6b28",fontSize:10}}>YT</div>
-                  <span className="bcard-name">{short}</span>
+                  {thumb ? (
+                    <img src={thumb} alt="" style={{width:32,height:32,borderRadius:4,objectFit:"cover",flexShrink:0}}/>
+                  ) : (
+                    <div className="b-avatar" style={{background:"#ff6b6b18",color:"#ff6b6b",border:"1px solid #ff6b6b28",fontSize:10}}>YT</div>
+                  )}
+                  <span className="bcard-name">{displayName}</span>
                 </div>
-                <span className="bstatus s-active">active</span>
+                <span className={`bstatus ${hasData?"s-active":"s-dead"}`}>{hasData?"active":"sync needed"}</span>
               </div>
               <div className="bstats">
                 <div><div className="mstat-val">{fmt(pf?.followers||0)}</div><div className="mstat-lbl">Followers</div></div>
@@ -311,9 +336,12 @@ function Overview({ onBrand }) {
   );
 }
 
-function BrandView({ brandId, onBack }) {
+function BrandView({ brandId, onBack, brands }) {
   const { getChannelData, channelData } = useYouTubeContext();
-  const brand = brandId ? (channelData[brandId] || Object.values(channelData).find(b=>b.platform?.handle===brandId||b.channel?.title===brandId)) : null;
+  const channelEntry = brandId ? (channelData[brandId] || Object.values(channelData).find(b=>b.platform?.handle===brandId||b.channel?.title===brandId)) : null;
+  const dbBrand = brands?.find(b => b.handles.includes(brandId));
+  const brand = channelEntry || (brandId && dbBrand ? { platform: { handle: brandId, followers: 0, avgViews: "—", last: "—", thumbnail: null }, channel: { title: brandId }, posts: [], totalViews: 0, dailyViews: [] } : null);
+  const hasChannelData = !!channelEntry;
   const [ap, setAp] = useState("youtube");
   const [time, setTime] = useState("ALL TIME");
   if (!brand) return null;
@@ -346,6 +374,11 @@ function BrandView({ brandId, onBack }) {
         </div>
       </div>
       <div className="page">
+        {!hasChannelData && (
+          <div className="alert" style={{marginBottom:18}}>
+            <span className="alert-txt"><strong>Channel data unavailable.</strong> Go to <strong>Accounts</strong> → re-sync this channel to load stats. (YouTube API may need to be fixed.)</span>
+          </div>
+        )}
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
           {[
             {l:"Followers",v:fmt(plat?.followers||0)},{l:"Total Views",v:fmt(brand.totalViews||0)},
@@ -421,6 +454,11 @@ function BrandView({ brandId, onBack }) {
                             <div className="pst">💬 <span>{p.cmts}</span></div>
                             <div className="pst">↗️ <span>{p.shares}</span></div>
                           </div>
+                          {(p.views||0)>0&&(
+                            <div style={{marginTop:4,fontFamily:"DM Mono",fontSize:8,color:"var(--text3)"}}>
+                              L/V: {((p.likes||0)/(p.views||1)*100).toFixed(2)}%
+                            </div>
+                          )}
                           {p.sr!==null&&(
                             <div style={{marginTop:7}}>
                               <div style={{display:"flex",justifyContent:"space-between",fontFamily:"DM Mono",fontSize:8,color:"#444",marginBottom:2}}>
@@ -444,28 +482,28 @@ function BrandView({ brandId, onBack }) {
   );
 }
 
-function Settings({ brands, addBrand, removeBrand, addHandleToBrand, removeHandleFromBrand, saveBrands }) {
+function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBrand, removeHandleFromBrand, removeChannel }) {
   const [modal, setModal] = useState(null);
   const [ytHandle, setYtHandle] = useState("");
   const [ytLoading, setYtLoading] = useState(false);
   const [ytError, setYtError] = useState(null);
   const [syncBrandId, setSyncBrandId] = useState(null);
   const [newBrandName, setNewBrandName] = useState("");
-  const { apiKey, accessToken, fetchChannel, removeChannel, channelData } = useYouTubeContext();
+  const { apiKey, accessToken, fetchChannel, channelData } = useYouTubeContext();
 
   const ic = p => p==="instagram"?"pig":p==="youtube"?"pyt":"ptt";
   const ie = p => p==="instagram"?"📸":p==="youtube"?"▶️":"🎵";
 
   const handleSync = async (targetBrandId) => {
-    if (!apiKey || !ytHandle.trim()) return;
+    if (!apiKey || !ytHandle.trim() || !targetBrandId) return;
     setYtLoading(true); setYtError(null);
     try {
       const entry = await fetchChannel(ytHandle.trim());
       const handle = entry?.platform?.handle || entry?.channel?.title;
       if (handle) {
-        if (targetBrandId) addHandleToBrand(targetBrandId, handle);
-        else { const id = crypto.randomUUID(); saveBrands([...brands, { id, name: handle, color: "#d63031", handles: [handle] }]); }
-        setYtHandle(""); setSyncBrandId(null);
+        const ytId = entry?.channel?.id ?? null;
+        await addHandleToBrand(targetBrandId, handle, ytId);
+        setYtHandle("");
       }
     } catch (e) { setYtError(e.message); }
     setYtLoading(false);
@@ -482,46 +520,44 @@ function Settings({ brands, addBrand, removeBrand, addHandleToBrand, removeHandl
       <div className="page">
         <div style={{marginBottom:24}}>
           <div className="stitle">CONNECTED ACCOUNTS</div>
-          <div className="sdesc">Add brands to group accounts. Add accounts under each brand via YouTube sync below.</div>
+          <div className="sdesc">Add brands first, then sync channels below to add them to a brand.</div>
           <button className="addbtn" onClick={()=>setModal("brand")} style={{marginBottom:12}}>+ Add brand</button>
-          {brands.length===0 ? (
-            <div style={{padding:20,textAlign:"center",color:"var(--text3)",fontSize:12,border:"1px dashed var(--border2)",borderRadius:4}}>No brands yet. Add a brand above, then sync a YouTube channel below to add accounts.</div>
+          {brandsLoading ? (
+            <div style={{padding:20,textAlign:"center",color:"var(--text3)",fontSize:12,border:"1px dashed var(--border2)",borderRadius:4}}>Loading brands…</div>
+          ) : brands.length===0 ? (
+            <div style={{padding:20,textAlign:"center",color:"var(--text3)",fontSize:12,border:"1px dashed var(--border2)",borderRadius:4}}>Add a brand above first, then use the YouTube sync below to add channels.</div>
           ) : brands.map(b=>(
             <div key={b.id} style={{marginBottom:16,border:"1px solid var(--border)",borderRadius:5,overflow:"hidden",background:"var(--surface)"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:"var(--surface2)",borderBottom:"1px solid var(--border)"}}>
                 <span style={{fontFamily:"var(--display)",fontSize:14,letterSpacing:1,color:"var(--text)"}}>{b.name}</span>
-                <button className="ibtn danger" style={{padding:"3px 8px",fontSize:9}} onClick={()=>removeBrand(b.id)}>✕ Remove</button>
+                <button className="ibtn danger" style={{padding:"3px 8px",fontSize:9}} onClick={async()=>await removeBrand(b.id)}>✕ Remove</button>
               </div>
               <div style={{padding:12}}>
                 {b.handles.map(h=>{
                   const d = channelData[h];
-                  if (!d) return null;
                   const a = { handle: h, ...(d?.platform||{}), plat: "youtube" };
                   return (
                     <div key={a.handle} className="arow">
-                      <div className={`picon ${ic(a.plat)}`}>{ie(a.plat)}</div>
+                      {a.thumbnail ? (
+                        <img src={a.thumbnail} alt="" style={{width:28,height:28,borderRadius:4,objectFit:"cover",flexShrink:0}}/>
+                      ) : (
+                        <div className={`picon ${ic(a.plat)}`}>{ie(a.plat)}</div>
+                      )}
                       <div className="ainfo">
                         <div className="ahandle">{a.handle}</div>
-                        <div className="atag">{a.plat}</div>
+                        <div className="atag">{d ? a.plat : "Syncing…"}</div>
                       </div>
                       <div className="ameta">
-                        <span>{a.followers ? fmt(a.followers)+" subs" : "—"}</span><br/>
-                        <span className="chip cig">ACTIVE</span>
+                        <span>{d ? (a.followers ? fmt(a.followers)+" subs" : "—") : "—"}</span><br/>
+                        <span className={`chip ${d?"cig":"ctt"}`}>{d?"ACTIVE":"SYNC FAILED"}</span>
                       </div>
                       <div className="aacts">
-                        <button className="ibtn" title="Re-sync" onClick={async()=>{setYtHandle(a.handle); setYtLoading(true); try{await fetchChannel(a.handle);}catch(e){setYtError(e.message);} setYtLoading(false);}}>⟳</button>
-                        <button className="ibtn danger" onClick={()=>{removeChannel(a.handle); removeHandleFromBrand(b.id, a.handle);}}>✕ Remove</button>
+                        <button className="ibtn" title="Re-sync" onClick={async()=>{setYtHandle(a.handle); setYtLoading(true); setYtError(null); try{await fetchChannel(a.handle, d?.channel?.id, true);}catch(e){setYtError(e.message);} setYtLoading(false);}}>⟳</button>
+                        <button className="ibtn danger" onClick={async()=>{removeChannel(a.handle); await removeHandleFromBrand(b.id, a.handle);}}>✕ Remove</button>
                       </div>
                     </div>
                   );
                 })}
-                <div style={{marginTop:8}}>
-                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                    <input className="finput" placeholder="e.g. @RawTruth.Podcast" value={syncBrandId===b.id?ytHandle:""} onChange={e=>{setYtHandle(e.target.value);setYtError(null);}} style={{width:200}} onFocus={()=>setSyncBrandId(b.id)}/>
-                    <button className="ibtn primary" disabled={!apiKey||ytLoading} onClick={()=>handleSync(b.id)}>{ytLoading&&syncBrandId===b.id?"Syncing…":"+ Add YouTube channel"}</button>
-                  </div>
-                  {syncBrandId===b.id&&ytError&&<div style={{marginTop:6,fontSize:11,color:"var(--red)"}}>{ytError}</div>}
-                </div>
               </div>
             </div>
           ))}
@@ -531,7 +567,7 @@ function Settings({ brands, addBrand, removeBrand, addHandleToBrand, removeHandl
 
         <div style={{marginBottom:20}}>
           <div className="stitle">YOUTUBE API</div>
-          <div className="sdesc">Sync a YouTube channel by handle or name. OAuth enables daily views &amp; analytics. Choose a brand above or create new.</div>
+          <div className="sdesc">Sync a YouTube channel by handle or name. OAuth enables daily views &amp; analytics. Add a brand above first, then select it here.</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:12}}>
             <span className={`chip ${apiKey?"cig":"ctt"}`}>{apiKey?"API KEY OK":"NO API KEY"}</span>
             {import.meta.env.VITE_GOOGLE_CLIENT_ID&&(
@@ -545,10 +581,10 @@ function Settings({ brands, addBrand, removeBrand, addHandleToBrand, removeHandl
             <input className="finput" placeholder="e.g. @RawTruth.Podcast" value={ytHandle} onChange={e=>{setYtHandle(e.target.value);setYtError(null);}} style={{width:260}}/>
             <span style={{fontSize:10,color:"var(--text3)"}}>Add to brand:</span>
             <select className="fselect" value={syncBrandId||""} onChange={e=>setSyncBrandId(e.target.value||null)} style={{width:160}}>
-              <option value="">+ New brand</option>
+              <option value="">Select brand…</option>
               {brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
-            <button className="ibtn primary" disabled={!apiKey||ytLoading} onClick={()=>handleSync(syncBrandId)}>{ytLoading?"Syncing…":"SYNC CHANNEL"}</button>
+            <button className="ibtn primary" disabled={!apiKey||ytLoading||!syncBrandId} onClick={()=>handleSync(syncBrandId)}>{ytLoading?"Syncing…":"SYNC CHANNEL"}</button>
           </div>
           {ytError&&<div style={{marginTop:8,fontSize:11,color:"var(--red)"}}>{ytError}</div>}
         </div>
@@ -589,7 +625,7 @@ function saveNav(page, brandId) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ page, brandId })); } catch {}
 }
 
-function loadBrands() {
+function loadBrandsLocal() {
   try {
     const v = localStorage.getItem(BRANDS_KEY);
     if (v) return JSON.parse(v);
@@ -599,8 +635,9 @@ function loadBrands() {
 
 export default function App() {
   const [nav, setNav] = useState(loadNav);
-  const [brands, setBrands] = useState(loadBrands);
-  const { connectedHandles, channelData, removeChannel } = useYouTubeContext();
+  const [brands, setBrands] = useState(loadBrandsLocal);
+  const [brandsLoading, setBrandsLoading] = useState(isSupabaseConfigured());
+  const { connectedHandles, channelData, removeChannel, fetchChannel } = useYouTubeContext();
 
   const page = nav.page;
   const brandId = nav.brandId;
@@ -612,34 +649,106 @@ export default function App() {
 
   const allHandles = [...new Set(brands.flatMap(b=>b.handles))];
   const channelBrands = brands.flatMap(b=>b.handles.map(h=>({handle:h,brand:b})));
-  const brandsWithData = allHandles.map(h=>channelData[h]).filter(Boolean);
+  const getBrandNameForChannel = (ch) => {
+    const h = ch?.platform?.handle || ch?.channel?.title || ch?.handle;
+    const chId = ch?.channel?.id || ch?.platform?.channelId;
+    for (const b of brands) {
+      if (b.handles.includes(h)) return b.name;
+      if (chId && b.handles.some(hh => channelData[hh] && (channelData[hh].channel?.id === chId || channelData[hh].platform?.channelId === chId)))
+        return b.name;
+    }
+    return ch?.platform?.handle || h;
+  };
+  // Build sidebar entries from DB (brands + handles) – show accounts even when YouTube API fails
+  const _entries = channelBrands.map(({ handle, brand }) => ({ handle, brand, data: channelData[handle] }));
+  const _seen = new Set();
+  const brandsWithData = _entries
+    .filter(({ handle, data }) => {
+      const id = data?.channel?.id || data?.platform?.channelId || handle;
+      if (_seen.has(id)) return false;
+      _seen.add(id);
+      return true;
+    })
+    .sort((a, b) => (b.data?.totalViews ?? 0) - (a.data?.totalViews ?? 0));
 
-  const saveBrands = (next) => {
+  const saveBrandsLocal = (next) => {
     setBrands(next);
     try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {}
   };
 
-  const addBrand = (name) => {
-    const id = crypto.randomUUID();
-    saveBrands([...brands, { id, name, color: "#d63031", handles: [] }]);
-  };
+  useEffect(() => {
+    const loadAndRefetch = (brandsData, handleToYoutubeId = {}) => {
+      setBrands(brandsData);
+      const handles = [...new Set(brandsData.flatMap((b) => b.handles))];
+      return Promise.all(handles.map((h) => fetchChannel(h, handleToYoutubeId[h]).catch(() => null)));
+    };
+    if (isSupabaseConfigured()) {
+      fetchBrandsWithChannels()
+        .then((res) => {
+          const brandsData = res.brands ?? res;
+          const handleToYoutubeId = res.handleToYoutubeId ?? {};
+          return loadAndRefetch(brandsData, handleToYoutubeId);
+        })
+        .catch((err) => {
+          console.error("Supabase brands load failed:", err);
+          return loadAndRefetch(loadBrandsLocal());
+        })
+        .finally(() => setBrandsLoading(false));
+    } else {
+      loadAndRefetch(loadBrandsLocal()).finally(() => setBrandsLoading(false));
+    }
+  }, [fetchChannel]);
 
-  const removeBrand = (id, removeChannelFn) => {
-    const b = brands.find(x=>x.id===id);
-    if (b?.handles) b.handles.forEach(h=>removeChannelFn?.(h));
-    saveBrands(brands.filter(b=>b.id!==id));
-  };
+  const addBrand = useCallback(async (name) => {
+    const b = { id: crypto.randomUUID(), name: name || "New Brand", color: "#d63031", handles: [] };
+    if (isSupabaseConfigured()) {
+      const row = await dbCreateBrand({ name: b.name, color: b.color });
+      b.id = row.id;
+    }
+    setBrands((prev) => {
+      const next = [...prev, b];
+      if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+    return b;
+  }, []);
 
-  const addHandleToBrand = (brandId, handle) => {
-    saveBrands(brands.map(b=>b.id===brandId?{...b,handles:[...new Set([...b.handles,handle])]}:b));
-  };
+  const removeBrand = useCallback(async (id, removeChannelFn) => {
+    const b = brands.find((x) => x.id === id);
+    if (b?.handles) b.handles.forEach((h) => removeChannelFn?.(h));
+    if (isSupabaseConfigured()) await dbDeleteBrand(id);
+    setBrands((prev) => {
+      const next = prev.filter((x) => x.id !== id);
+      if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [brands]);
 
-  const removeHandleFromBrand = (brandId, handle) => {
-    saveBrands(brands.map(b=>b.id===brandId?{...b,handles:b.handles.filter(h=>h!==handle)}:b));
-  };
+  const addHandleToBrand = useCallback(async (brandId, handle, youtubeChannelId = null) => {
+    if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, "youtube", youtubeChannelId);
+    setBrands((prev) => {
+      const next = prev.map((b) => (b.id === brandId ? { ...b, handles: [...new Set([...b.handles, handle])] } : b));
+      if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const removeHandleFromBrand = useCallback(async (brandId, handle) => {
+    if (isSupabaseConfigured()) await dbRemoveChannelFromBrand(brandId, handle);
+    setBrands((prev) => {
+      const next = prev.map((b) => (b.id === brandId ? { ...b, handles: b.handles.filter((h) => h !== handle) } : b));
+      if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const saveBrands = useCallback((next) => {
+    setBrands(next);
+    if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {}
+  }, []);
 
   useEffect(() => {
-    if (brands.length===0 && connectedHandles.length>0) {
+    if (!isSupabaseConfigured() && brands.length === 0 && connectedHandles.length > 0) {
       const mig = [{ id: crypto.randomUUID(), name: "Channels", color: "#d63031", handles: [...connectedHandles] }];
       setBrands(mig);
       try { localStorage.setItem(BRANDS_KEY, JSON.stringify(mig)); } catch {}
@@ -664,13 +773,20 @@ export default function App() {
             </div>
           </div>
           <div className="nav-sec">
-            <div className="nav-lbl">Channels</div>
-            {brandsWithData.map(b=>{
-              const h=b.platform?.handle; const short=(h||"?").split(" ").slice(-1)[0].slice(0,2).toUpperCase();
+            <div className="nav-lbl">Brands</div>
+            {brandsWithData.map(({ handle, brand, data },i)=>{
+              const rank = i+1;
+              const thumb = data?.platform?.thumbnail;
+              const displayName = brand.name || data?.platform?.handle || handle || "?";
+              const navId = data?.platform?.handle || data?.channel?.title || handle;
               return (
-              <div key={b.channel?.id} className={`brand-item${page==="brand"&&brandId===h?" act":""}`} onClick={()=>go("brand",h)}>
-                <div className="b-avatar" style={{background:"#ff6b6b18",color:"#ff6b6b",border:"1px solid #ff6b6b25",fontSize:10}}>YT</div>
-                <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{short}</span>
+              <div key={handle} className={`brand-item${page==="brand"&&(brandId===navId||brandId===handle)?" act":""}`} onClick={()=>go("brand", navId)}>
+                {thumb ? (
+                  <img src={thumb} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}}/>
+                ) : (
+                  <div style={{width:18,height:18,borderRadius:2,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"DM Mono",fontSize:10,fontWeight:500,color:"var(--text2)",background:"var(--surface2)",border:"1px solid var(--border2)",flexShrink:0}}>{rank}</div>
+                )}
+                <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={displayName}>{displayName}</span>
               </div>
             );})}
           </div>
@@ -682,9 +798,9 @@ export default function App() {
           const el=document.activeElement, t=e.target;
           if ((el?.tagName==="INPUT"||el?.tagName==="TEXTAREA")&&!t.closest("input,textarea,select,button")) el.blur();
         }}>
-          {page==="overview"&&<Overview onBrand={id=>go("brand",id)}/>}
-          {page==="brand"&&<BrandView brandId={brandId} onBack={()=>go("overview")}/>}
-          {page==="settings"&&<Settings brands={brands} addBrand={addBrand} removeBrand={id=>removeBrand(id,removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} saveBrands={saveBrands} removeChannel={removeChannel}/>}
+          {page==="overview"&&<Overview onBrand={id=>go("brand",id)} getBrandNameForChannel={getBrandNameForChannel} brandsFromDb={brands}/>}
+          {page==="brand"&&<BrandView brandId={brandId} onBack={()=>go("overview")} brands={brands}/>}
+          {page==="settings"&&<Settings brands={brands} brandsLoading={brandsLoading} addBrand={addBrand} removeBrand={id=>removeBrand(id,removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel}/>}
         </div>
       </div>
     </>

@@ -42,6 +42,9 @@ ALTER TABLE brand_channels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE channel_cache ENABLE ROW LEVEL SECURITY;
 
 -- For now: allow all operations (adjust for auth later)
+DROP POLICY IF EXISTS "Allow all on brands" ON brands;
+DROP POLICY IF EXISTS "Allow all on brand_channels" ON brand_channels;
+DROP POLICY IF EXISTS "Allow all on channel_cache" ON channel_cache;
 CREATE POLICY "Allow all on brands" ON brands FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on brand_channels" ON brand_channels FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on channel_cache" ON channel_cache FOR ALL USING (true) WITH CHECK (true);
