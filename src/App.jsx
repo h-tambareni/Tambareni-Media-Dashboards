@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { isSupabaseConfigured } from "./lib/supabase";
+import tmLogo from "../assets/tm-logo-icon.jpg";
 import {
   fetchBrandsWithChannels,
   createBrand as dbCreateBrand,
@@ -11,6 +12,7 @@ import {
   toggleChannelActive as dbToggleChannelActive,
   ck, pk,
 } from "./lib/supabaseDb";
+import { getInstagramAuthUrl } from "./lib/instagramApi";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
 
@@ -346,11 +348,11 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
                 const ranked = [...allPosts].sort((a,b) => b.views - a.views);
                 if (!ranked.length) return <div style={{fontSize:10,color:"var(--text3)",padding:"8px 0"}}>Sync an account to see top posts</div>;
                 return ranked.map((p,i) => (
-                  <div key={p.id} style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:3,padding:"6px 8px",borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":"var(--red)"}`,flexShrink:0}}>
+                  <div key={p.id} style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:3,padding:"6px 8px",borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":p.plat==="ig"?"#E1306C":"var(--red)"}`,flexShrink:0}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:5}}>
                       <span style={{fontFamily:"var(--display)",fontSize:13,color:"var(--text3)",minWidth:14}}>#{i+1}</span>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:9,color:"var(--text3)"}}>{p._brand} · {p.plat==="tt"?"🎵":"▶️"}</div>
+                        <div style={{fontSize:9,color:"var(--text3)"}}>{p._brand} · {p.plat==="tt"?"🎵":p.plat==="ig"?"📷":"▶️"}</div>
                         <div style={{fontSize:10,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.cap}</div>
                       </div>
                       <span style={{fontFamily:"var(--display)",fontSize:14,color:"var(--text)",flexShrink:0}}>{fmt(p.views)}</span>
@@ -383,9 +385,11 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
             const allInactive = allHandles.length > 0 && allHandles.every(h => b.handleStatus?.[h] === false);
             const hasTT = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "tiktok");
             const hasYT = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "youtube");
+            const hasIG = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "instagram");
             const cols = [];
             if (hasTT) cols.push({ pt: "tiktok", name: "TikTok" });
             if (hasYT) cols.push({ pt: "youtube", name: "YouTube" });
+            if (hasIG) cols.push({ pt: "instagram", name: "Instagram" });
             if (allHandles.length >= 2) cols.push({ pt: "total", name: "TOTAL" });
             const boxStyle = { flex: "0 0 calc((100% - 16px) / 3)", minWidth: 0 };
             return (
@@ -635,9 +639,10 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
   const [syncError, setSyncError] = useState(null);
   const [syncBrandId, setSyncBrandId] = useState(null);
   const [newBrandName, setNewBrandName] = useState("");
-  const { apiKey, fetchChannel, channelData } = useYouTubeContext();
+  const { apiKey, instagramConfigured, fetchChannel, channelData } = useYouTubeContext();
 
   const handleSync = async (targetBrandId) => {
+    if (syncPlatform === "instagram") return;
     if (!apiKey || !syncHandle.trim() || !targetBrandId) return;
     setSyncLoading(true); setSyncError(null);
     try {
@@ -652,6 +657,10 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
       }
     } catch (e) { setSyncError(e.message); }
     setSyncLoading(false);
+  };
+
+  const handleConnectInstagram = (targetBrandId) => {
+    window.location.href = getInstagramAuthUrl(targetBrandId);
   };
 
   return (
@@ -730,33 +739,54 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
         <div className="ovrl" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="mtitle">ADD ACCOUNT</div>
-            <div className="msub">Add a YouTube or TikTok account by handle. Select a brand to assign it to.</div>
+            <div className="msub">Add a YouTube, TikTok, or Instagram account. Select a brand to assign it to.</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:12}}>
               <span className={`chip ${apiKey?"cig":"ctt"}`}>{apiKey ? "API KEY OK" : "NO API KEY"}</span>
+              {instagramConfigured && <span className="chip cig">INSTAGRAM OK</span>}
             </div>
             <div className="fg">
               <label className="flbl">Platform</label>
-              <select className="fselect" value={syncPlatform} onChange={e => setSyncPlatform(e.target.value)} style={{width:"100%"}}>
+              <select className="fselect" value={syncPlatform} onChange={e => { setSyncPlatform(e.target.value); setSyncError(null); }} style={{width:"100%"}}>
                 <option value="youtube">YouTube</option>
                 <option value="tiktok">TikTok</option>
+                <option value="instagram">Instagram</option>
               </select>
             </div>
-            <div className="fg">
-              <label className="flbl">Handle</label>
-              <input className="finput" placeholder={syncPlatform === "tiktok" ? "e.g. charlidamelio" : "e.g. @RawTruth.Podcast"} value={syncHandle} onChange={e => { setSyncHandle(e.target.value); setSyncError(null); }} style={{width:"100%"}}/>
-            </div>
-            <div className="fg">
-              <label className="flbl">Brand</label>
-              <select className="fselect" value={syncBrandId || ""} onChange={e => setSyncBrandId(e.target.value || null)} style={{width:"100%"}}>
-                <option value="">Select brand…</option>
-                {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </div>
-            {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
-            <div className="macts">
-              <button className="ibtn" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
-              <button className="ibtn primary" disabled={!apiKey || syncLoading || !syncBrandId} onClick={() => handleSync(syncBrandId)}>{syncLoading ? "Syncing…" : "ADD ACCOUNT"}</button>
-            </div>
+            {syncPlatform === "instagram" ? (
+              <>
+                <div className="fg">
+                  <label className="flbl">Brand</label>
+                  <select className="fselect" value={syncBrandId || ""} onChange={e => setSyncBrandId(e.target.value || null)} style={{width:"100%"}}>
+                    <option value="">Select brand…</option>
+                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+                <div className="msub" style={{marginBottom:12}}>Connect your Instagram account with one click. You’ll be redirected to Instagram to authorize.</div>
+                <div className="macts">
+                  <button className="ibtn" onClick={() => { setModal(null); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
+                  <button className="ibtn primary" disabled={!instagramConfigured || !syncBrandId} onClick={() => handleConnectInstagram(syncBrandId)}>Connect with Instagram</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="fg">
+                  <label className="flbl">Handle</label>
+                  <input className="finput" placeholder={syncPlatform === "tiktok" ? "e.g. charlidamelio" : "e.g. @RawTruth.Podcast"} value={syncHandle} onChange={e => { setSyncHandle(e.target.value); setSyncError(null); }} style={{width:"100%"}}/>
+                </div>
+                <div className="fg">
+                  <label className="flbl">Brand</label>
+                  <select className="fselect" value={syncBrandId || ""} onChange={e => setSyncBrandId(e.target.value || null)} style={{width:"100%"}}>
+                    <option value="">Select brand…</option>
+                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+                {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
+                <div className="macts">
+                  <button className="ibtn" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
+                  <button className="ibtn primary" disabled={!apiKey || syncLoading || !syncBrandId} onClick={() => handleSync(syncBrandId)}>{syncLoading ? "Syncing…" : "ADD ACCOUNT"}</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -803,6 +833,27 @@ export default function App() {
         .finally(() => setBrandsLoading(false));
     } else {
       loadAndRefetch(loadBrandsLocal()).finally(() => setBrandsLoading(false));
+    }
+  }, [fetchChannel]);
+
+  const handledInstagramReturn = useRef(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ig = params.get("instagram");
+    if (ig && isSupabaseConfigured() && !handledInstagramReturn.current) {
+      handledInstagramReturn.current = true;
+      window.history.replaceState({}, "", window.location.pathname);
+      fetchBrandsWithChannels()
+        .then(res => {
+          setBrands(res.brands ?? []);
+          const keys = [...new Set((res.brands ?? []).flatMap(b => b.handles))];
+          return Promise.all(keys.map(key => {
+            const { handle, platform } = pk(key);
+            return fetchChannel(handle, platform).catch(() => null);
+          }));
+        })
+        .then(() => { if (ig === "success") go("settings"); })
+        .catch(() => {});
     }
   }, [fetchChannel]);
 
@@ -897,6 +948,7 @@ export default function App() {
       <div className="app">
         <div className="sidebar">
           <div className="logo-area">
+            <img src={tmLogo} alt="Tambareni Media" style={{width:48,height:48,borderRadius:6,objectFit:"cover",marginBottom:10,transform:"scale(1.1)"}}/>
             <div className="logo-text">TAMBARENI<br/>MEDIA<br/>ANALYTICS</div>
           </div>
           <div className="nav-sec">

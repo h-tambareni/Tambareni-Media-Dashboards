@@ -1,12 +1,13 @@
 /**
- * Platform context — fetches channel + video data via ScrapeCreators API.
- * Supports YouTube and TikTok. Caches snapshots in Supabase channel_cache.
+ * Platform context — fetches channel + video data via ScrapeCreators API + Instagram Edge Functions.
+ * Supports YouTube, TikTok, and Instagram. Caches snapshots in Supabase channel_cache.
  * Stores daily view totals for views-over-time chart.
  *
  * channelData keys use composite format: "handle::platform"
  */
 import { createContext, useContext, useState, useCallback } from "react";
 import { fetchYTChannel, fetchYTChannelVideos, fetchTTProfile, fetchTTProfileVideos } from "../lib/scrapeCreators";
+import { fetchInstagramChannel } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
@@ -33,12 +34,64 @@ export function YouTubeProvider({ children }) {
 
   const fetchChannel = useCallback(
     async (handleOrName, platformHint = "youtube", forceRefresh = false, forceFullFetch = false) => {
-      if (!apiKey) throw new Error("VITE_SCRAPECREATORS_API_KEY not set");
       const handle = (handleOrName?.trim() || "").replace(/^@/, "");
       const plat = platformHint || "youtube";
       const compositeKey = ck(handle, plat);
       const flightKey = `${compositeKey}:${forceRefresh}`;
 
+      if (plat === "instagram") {
+        const existing = inFlight.get(flightKey);
+        if (existing) return existing;
+        const doFetch = async () => {
+          try {
+            if (isSupabaseConfigured() && !forceRefresh) {
+              const cached = await getCachedChannelWithFallback(handle, plat);
+              if (isCacheFresh(cached)) {
+                const snap = parseCachedSnapshot(cached);
+                if (snap) {
+                  setChannels((prev) => ({ ...prev, [compositeKey]: snap }));
+                  setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
+                  return snap;
+                }
+              }
+            }
+            const raw = await fetchInstagramChannel(compositeKey);
+            const posts = (raw.posts || []).map(p => ({ ...p, emoji: "📷" }));
+            const lastPost = posts[0];
+            const avgV = posts.length ? Math.round(posts.reduce((s, x) => s + (x.views || 0), 0) / posts.length) : 0;
+            const entry = {
+              channel: raw.channel,
+              platform: {
+                ...raw.platform,
+                avgViews: avgV >= 1000 ? (avgV / 1000).toFixed(1) + "K" : String(avgV),
+                status: "active",
+                last: lastPost?.publishedAt ? formatTimeAgo(lastPost.publishedAt) : "—",
+              },
+              posts,
+              totalViews: raw.totalViews ?? 0,
+              dailyViews: raw.dailyViews || [],
+            };
+            setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
+            setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
+            if (isSupabaseConfigured()) {
+              upsertChannelCache(compositeKey, entry).catch(() => {});
+              upsertDailySnapshot(handle, plat, {
+                totalViews: entry.totalViews,
+                followers: raw.channel?.subscribers ?? raw.platform?.followers ?? 0,
+                videoCount: raw.channel?.videoCount ?? raw.channel?.media_count ?? 0,
+              }).catch(() => {});
+            }
+            return entry;
+          } finally {
+            inFlight.delete(flightKey);
+          }
+        };
+        const p = doFetch();
+        inFlight.set(flightKey, p);
+        return p;
+      }
+
+      if (!apiKey) throw new Error("VITE_SCRAPECREATORS_API_KEY not set");
       const existing = inFlight.get(flightKey);
       if (existing) return existing;
 
@@ -165,6 +218,7 @@ export function YouTubeProvider({ children }) {
 
   const value = {
     apiKey: !!apiKey,
+    instagramConfigured: !!(import.meta.env.VITE_INSTAGRAM_APP_ID && import.meta.env.VITE_SUPABASE_URL),
     fetchChannel,
     removeChannel,
     channelData: channels,
