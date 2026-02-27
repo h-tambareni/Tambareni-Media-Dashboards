@@ -1,62 +1,55 @@
 /**
- * Supabase database helpers for brands and channels.
- * Use these when wiring the app to Supabase (after credentials are set).
+ * Supabase database helpers for brands, channels, cache, and daily snapshots.
  */
 import { supabase, isSupabaseConfigured } from "./supabase";
 
 // ─── Brands ────────────────────────────────────────────────────────────────
 
-/** Fetch brands with handles array (app-ready shape: { id, name, color, handles }[])
- * Also returns handleToYoutubeId: { [handle]: youtubeChannelId } to skip search API (saves 100 units) */
 export async function fetchBrandsWithChannels() {
-  if (!isSupabaseConfigured()) return [];
+  if (!isSupabaseConfigured()) return { brands: [], channelMeta: {} };
   const { data: brandsData, error: brandsErr } = await supabase
     .from("brands")
     .select("id, name, color")
     .order("created_at", { ascending: true });
   if (brandsErr) throw brandsErr;
-  if (!brandsData?.length) return [];
-  const { data: channelsData, error: channelsErr } = await supabase
+  if (!brandsData?.length) return { brands: [], channelMeta: {} };
+  let channelsData;
+  const { data: d1, error: e1 } = await supabase
     .from("brand_channels")
-    .select("brand_id, channel_handle, youtube_channel_id");
-  if (channelsErr) throw channelsErr;
+    .select("brand_id, channel_handle, platform, youtube_channel_id, active");
+  if (e1) {
+    const { data: d2, error: e2 } = await supabase
+      .from("brand_channels")
+      .select("brand_id, channel_handle, platform, youtube_channel_id");
+    if (e2) throw e2;
+    channelsData = d2;
+  } else {
+    channelsData = d1;
+  }
   const byBrand = {};
-  const handleToYoutubeId = {};
+  const channelMeta = {};
   (channelsData ?? []).forEach((row) => {
     if (!byBrand[row.brand_id]) byBrand[row.brand_id] = [];
-    byBrand[row.brand_id].push(row.channel_handle);
-    if (row.youtube_channel_id) handleToYoutubeId[row.channel_handle] = row.youtube_channel_id;
+    byBrand[row.brand_id].push({ handle: row.channel_handle, active: row.active !== false });
+    channelMeta[row.channel_handle] = {
+      platform: row.platform || "youtube",
+      youtubeChannelId: row.youtube_channel_id,
+      active: row.active !== false,
+    };
   });
   const brands = brandsData.map((b) => ({
     id: b.id,
     name: b.name,
     color: b.color ?? "#d63031",
-    handles: byBrand[b.id] ?? [],
+    handles: (byBrand[b.id] ?? []).map(h => h.handle),
+    handleStatus: Object.fromEntries((byBrand[b.id] ?? []).map(h => [h.handle, h.active])),
   }));
-  return { brands, handleToYoutubeId };
-}
-
-export async function fetchBrands() {
-  if (!isSupabaseConfigured()) return [];
-  const { data, error } = await supabase.from("brands").select("*").order("created_at", { ascending: true });
-  if (error) throw error;
-  return data ?? [];
+  return { brands, channelMeta };
 }
 
 export async function createBrand({ name, color = "#d63031" }) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
   const { data, error } = await supabase.from("brands").insert({ name, color }).select().single();
-  if (error) throw error;
-  return data;
-}
-
-export async function updateBrand(id, { name, color }) {
-  if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const updates = {};
-  if (name !== undefined) updates.name = name;
-  if (color !== undefined) updates.color = color;
-  updates.updated_at = new Date().toISOString();
-  const { data, error } = await supabase.from("brands").update(updates).eq("id", id).select().single();
   if (error) throw error;
   return data;
 }
@@ -68,17 +61,6 @@ export async function deleteBrand(id) {
 }
 
 // ─── Brand Channels ────────────────────────────────────────────────────────
-
-export async function fetchBrandChannels(brandId) {
-  if (!isSupabaseConfigured()) return [];
-  const { data, error } = await supabase
-    .from("brand_channels")
-    .select("*")
-    .eq("brand_id", brandId)
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return data ?? [];
-}
 
 export async function addChannelToBrand(brandId, channelHandle, platform = "youtube", youtubeChannelId = null) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
@@ -101,11 +83,19 @@ export async function removeChannelFromBrand(brandId, channelHandle) {
   if (error) throw error;
 }
 
-// ─── Channel cache ─────────────────────────────────────────────────────────
-// Reduces YouTube API calls by caching full channel+posts snapshots
-// Cache TTL: channel metadata 6h, full sync 2h (configurable)
+export async function toggleChannelActive(brandId, channelHandle, active) {
+  if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+  const { error } = await supabase
+    .from("brand_channels")
+    .update({ active })
+    .eq("brand_id", brandId)
+    .eq("channel_handle", channelHandle);
+  if (error) console.warn("toggleChannelActive failed (run migration 002):", error.message);
+}
 
-export const CACHE_TTL_HOURS = { channel: 6, fullSync: 2 };
+// ─── Channel cache ─────────────────────────────────────────────────────────
+
+export const CACHE_TTL_HOURS = 12;
 
 export async function getCachedChannel(channelHandle) {
   if (!isSupabaseConfigured()) return null;
@@ -113,41 +103,53 @@ export async function getCachedChannel(channelHandle) {
   return data;
 }
 
-/** Check if cache is fresh for given TTL (hours). Returns cached full entry or null */
-export function isCacheFresh(cached, ttlHours = CACHE_TTL_HOURS.fullSync) {
+export function isCacheFresh(cached, ttlHours = CACHE_TTL_HOURS) {
   if (!cached?.last_synced_at) return false;
-  const cutoff = Date.now() - ttlHours * 60 * 60 * 1000;
-  return new Date(cached.last_synced_at).getTime() > cutoff;
+  return new Date(cached.last_synced_at).getTime() > Date.now() - ttlHours * 3600000;
 }
 
-/** Parse full snapshot from raw_platform_json (channel, platform, posts, totalViews, dailyViews) */
 export function parseCachedSnapshot(cached) {
   const snap = cached?.raw_platform_json;
   if (!snap?.channel) return null;
-  return {
-    channel: snap.channel,
-    platform: snap.platform,
-    posts: snap.posts ?? [],
-    totalViews: snap.totalViews ?? 0,
-    dailyViews: snap.dailyViews ?? [],
-  };
+  return snap;
 }
 
-export async function upsertChannelCache(channelHandle, {
-  youtube_channel_id,
-  subscribers,
-  video_count,
-  raw_platform_json,
-  fullSnapshot, // { channel, platform, posts, totalViews, dailyViews } for cache-first loads
-}) {
+export async function upsertChannelCache(channelHandle, snapshot) {
   if (!isSupabaseConfigured()) return;
-  const payload = {
+  await supabase.from("channel_cache").upsert({
     channel_handle: channelHandle,
-    youtube_channel_id,
-    subscribers,
-    video_count,
-    raw_platform_json: fullSnapshot ?? raw_platform_json,
+    youtube_channel_id: snapshot.channel?.id || null,
+    subscribers: snapshot.channel?.subscribers ?? 0,
+    video_count: snapshot.channel?.videoCount ?? 0,
+    raw_platform_json: snapshot,
     last_synced_at: new Date().toISOString(),
-  };
-  await supabase.from("channel_cache").upsert(payload, { onConflict: "channel_handle" });
+  }, { onConflict: "channel_handle" });
+}
+
+// ─── Daily snapshots (for views-over-time chart) ───────────────────────────
+
+export async function upsertDailySnapshot(channelHandle, platform, { totalViews, followers, videoCount }) {
+  if (!isSupabaseConfigured()) return;
+  const today = new Date().toISOString().slice(0, 10);
+  await supabase.from("daily_snapshots").upsert({
+    channel_handle: channelHandle,
+    platform,
+    snapshot_date: today,
+    total_views: totalViews ?? 0,
+    followers: followers ?? 0,
+    video_count: videoCount ?? 0,
+  }, { onConflict: "channel_handle,platform,snapshot_date" });
+}
+
+export async function fetchDailySnapshots(channelHandle, platform, days = 90) {
+  if (!isSupabaseConfigured()) return [];
+  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from("daily_snapshots")
+    .select("snapshot_date, total_views, followers")
+    .eq("channel_handle", channelHandle)
+    .eq("platform", platform)
+    .gte("snapshot_date", since)
+    .order("snapshot_date", { ascending: true });
+  return data ?? [];
 }
