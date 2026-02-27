@@ -3,6 +3,15 @@
  */
 import { supabase, isSupabaseConfigured } from "./supabase";
 
+export const CK_SEP = "::";
+const norm = (h) => (h || "").toString().trim().toLowerCase().replace(/^@/, "");
+export const ck = (handle, platform) => `${norm(handle)}${CK_SEP}${(platform || "youtube")}`;
+export const pk = (compositeKey) => {
+  const i = (compositeKey || "").lastIndexOf(CK_SEP);
+  if (i > 0) return { handle: compositeKey.slice(0, i), platform: compositeKey.slice(i + CK_SEP.length) };
+  return { handle: compositeKey || "", platform: "youtube" };
+};
+
 // ─── Brands ────────────────────────────────────────────────────────────────
 
 export async function fetchBrandsWithChannels() {
@@ -29,10 +38,13 @@ export async function fetchBrandsWithChannels() {
   const byBrand = {};
   const channelMeta = {};
   (channelsData ?? []).forEach((row) => {
+    const plat = row.platform || "youtube";
+    const key = ck(row.channel_handle, plat);
     if (!byBrand[row.brand_id]) byBrand[row.brand_id] = [];
-    byBrand[row.brand_id].push({ handle: row.channel_handle, active: row.active !== false });
-    channelMeta[row.channel_handle] = {
-      platform: row.platform || "youtube",
+    byBrand[row.brand_id].push({ key, handle: row.channel_handle, platform: plat, active: row.active !== false });
+    channelMeta[key] = {
+      handle: row.channel_handle,
+      platform: plat,
       youtubeChannelId: row.youtube_channel_id,
       active: row.active !== false,
     };
@@ -41,8 +53,8 @@ export async function fetchBrandsWithChannels() {
     id: b.id,
     name: b.name,
     color: b.color ?? "#d63031",
-    handles: (byBrand[b.id] ?? []).map(h => h.handle),
-    handleStatus: Object.fromEntries((byBrand[b.id] ?? []).map(h => [h.handle, h.active])),
+    handles: (byBrand[b.id] ?? []).map(h => h.key),
+    handleStatus: Object.fromEntries((byBrand[b.id] ?? []).map(h => [h.key, h.active])),
   }));
   return { brands, channelMeta };
 }
@@ -64,32 +76,33 @@ export async function deleteBrand(id) {
 
 export async function addChannelToBrand(brandId, channelHandle, platform = "youtube", youtubeChannelId = null) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+  const h = norm(channelHandle) || channelHandle;
   const { data, error } = await supabase
     .from("brand_channels")
-    .insert({ brand_id: brandId, channel_handle: channelHandle, platform, youtube_channel_id: youtubeChannelId })
+    .insert({ brand_id: brandId, channel_handle: h, platform, youtube_channel_id: youtubeChannelId })
     .select()
     .single();
   if (error) throw error;
   return data;
 }
 
-export async function removeChannelFromBrand(brandId, channelHandle) {
+export async function removeChannelFromBrand(brandId, channelHandle, platform) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const { error } = await supabase
-    .from("brand_channels")
-    .delete()
-    .eq("brand_id", brandId)
-    .eq("channel_handle", channelHandle);
+  const h = norm(channelHandle) || channelHandle;
+  const handles = [...new Set([h, channelHandle].filter(Boolean))];
+  let q = supabase.from("brand_channels").delete().eq("brand_id", brandId).in("channel_handle", handles);
+  if (platform) q = q.eq("platform", platform);
+  const { error } = await q;
   if (error) throw error;
 }
 
-export async function toggleChannelActive(brandId, channelHandle, active) {
+export async function toggleChannelActive(brandId, channelHandle, platform, active) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const { error } = await supabase
-    .from("brand_channels")
-    .update({ active })
-    .eq("brand_id", brandId)
-    .eq("channel_handle", channelHandle);
+  const h = norm(channelHandle) || channelHandle;
+  const handles = [...new Set([h, channelHandle].filter(Boolean))];
+  let q = supabase.from("brand_channels").update({ active }).eq("brand_id", brandId).in("channel_handle", handles);
+  if (platform) q = q.eq("platform", platform);
+  const { error } = await q;
   if (error) console.warn("toggleChannelActive failed (run migration 002):", error.message);
 }
 
@@ -99,8 +112,25 @@ export const CACHE_TTL_HOURS = 12;
 
 export async function getCachedChannel(channelHandle) {
   if (!isSupabaseConfigured()) return null;
-  const { data } = await supabase.from("channel_cache").select("*").eq("channel_handle", channelHandle).single();
+  const { data } = await supabase.from("channel_cache").select("*").eq("channel_handle", channelHandle).maybeSingle();
   return data;
+}
+
+/** Try composite key first, then legacy raw handle (normalized). Validates platform match for legacy. */
+export async function getCachedChannelWithFallback(handle, platform) {
+  if (!isSupabaseConfigured()) return null;
+  const composite = ck(handle, platform);
+  let { data: cached } = await supabase.from("channel_cache").select("*").eq("channel_handle", composite).maybeSingle();
+  if (cached) return cached;
+  const rawNorm = norm(handle);
+  let { data: legacy } = await supabase.from("channel_cache").select("*").eq("channel_handle", rawNorm).maybeSingle();
+  if (!legacy && rawNorm !== handle) {
+    const { data: leg2 } = await supabase.from("channel_cache").select("*").eq("channel_handle", handle).maybeSingle();
+    legacy = leg2;
+  }
+  if (!legacy?.raw_platform_json) return null;
+  const plat = legacy.raw_platform_json?.platform?.platformType || legacy.raw_platform_json?.channel?.platform;
+  return plat === platform ? legacy : null;
 }
 
 export function isCacheFresh(cached, ttlHours = CACHE_TTL_HOURS) {

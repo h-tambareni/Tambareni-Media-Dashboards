@@ -9,6 +9,7 @@ import {
   addChannelToBrand as dbAddChannelToBrand,
   removeChannelFromBrand as dbRemoveChannelFromBrand,
   toggleChannelActive as dbToggleChannelActive,
+  ck, pk,
 } from "./lib/supabaseDb";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
@@ -44,7 +45,7 @@ const css = `
 .rbadge { background:var(--red); color:white; font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px; margin-left:auto; }
 .dbadge { background:#1a1a1a; color:var(--text3); font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px; margin-left:auto; }
 .main { flex:1; overflow-x:hidden; min-width:0; }
-.topbar { height:52px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 28px; background:var(--surface); position:sticky; top:0; z-index:10; }
+.topbar { height:48px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:var(--surface); position:sticky; top:0; z-index:10; }
 .topbar-title { font-family:var(--display); font-size:20px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
 .tr { display:flex; align-items:center; gap:10px; }
 .tpill { display:flex; background:var(--surface2); border:1px solid var(--border2); border-radius:3px; overflow:hidden; }
@@ -55,34 +56,37 @@ const css = `
 .ibtn.primary { background:var(--red); border-color:var(--red); color:white; }
 .ibtn.danger { color:#e17055; border-color:rgba(225,112,85,.25); }
 .ibtn.danger:hover { background:rgba(225,112,85,.1); }
-.page { padding:24px 28px; }
-.krow { display:grid; gap:1px; background:var(--border); border:1px solid var(--border); border-radius:5px; overflow:hidden; margin-bottom:20px; }
-.kcard { background:var(--surface); padding:18px 20px; }
-.klbl { font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:2px; text-transform:uppercase; margin-bottom:8px; }
-.kval { font-family:var(--display); font-size:34px; letter-spacing:1px; line-height:1; color:var(--text); }
-.ksub { font-family:var(--mono); font-size:10px; color:var(--text2); margin-top:5px; }
+.page { padding:16px 24px; }
+.page-fit { display:flex; flex-direction:column; height:calc(100vh - 48px); overflow:hidden; }
+.page-fit > * { flex-shrink:0; }
+.page-fit .bgrid { flex:1; min-height:0; overflow-y:auto; align-content:start; }
+.krow { display:grid; gap:1px; background:var(--border); border:1px solid var(--border); border-radius:5px; overflow:hidden; margin-bottom:12px; }
+.kcard { background:var(--surface); padding:16px 20px; }
+.klbl { font-family:var(--mono); font-size:11px; color:var(--text2); letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
+.kval { font-family:var(--display); font-size:64px; letter-spacing:1px; line-height:1; color:var(--text); }
+.ksub { font-family:var(--mono); font-size:10px; color:var(--text2); margin-top:3px; }
 .kchg { font-family:var(--mono); font-size:9px; margin-top:3px; }
 .up { color:var(--green); } .dn { color:var(--red); }
-.g2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
-.panel { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:18px 20px; }
-.ph { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
-.ptitle { font-family:var(--display); font-size:16px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
+.g3 { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:12px; min-height:272px; flex:1; }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:14px 16px; overflow:hidden; }
+.ph { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.ptitle { font-family:var(--display); font-size:14px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
 .pact { font-family:var(--mono); font-size:9px; color:var(--text3); cursor:pointer; }
 .alert { background:var(--red-dim); border:1px solid var(--red); border-radius:5px; padding:12px 16px; margin-bottom:18px; display:flex; align-items:center; gap:12px; }
 .alert-txt { font-size:12px; flex:1; }
 .alert-txt strong { color:var(--red); }
-.bgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px; }
-.bcard { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:16px 18px; cursor:pointer; transition:all .18s; position:relative; overflow:hidden; }
+.bgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px; }
+.bcard { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:10px 12px; cursor:pointer; transition:all .18s; position:relative; overflow:hidden; }
 .bcard:hover { border-color:var(--border2); transform:translateY(-1px); }
 .bcard.dead { opacity:.4; cursor:default; }
-.bcard-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
-.bcard-name { font-family:var(--display); font-size:18px; letter-spacing:1px; }
-.bstatus { font-family:var(--mono); font-size:8px; padding:2px 6px; border-radius:2px; text-transform:uppercase; letter-spacing:1px; }
+.bcard-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.bcard-name { font-family:var(--display); font-size:16px; letter-spacing:1px; }
+.bstatus { font-family:var(--mono); font-size:7px; padding:2px 5px; border-radius:2px; text-transform:uppercase; letter-spacing:1px; }
 .s-active { background:var(--green-dim); color:var(--green); }
 .s-dead { background:var(--red-dim); color:var(--red); }
-.bstats { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.mstat-val { font-family:var(--display); font-size:20px; }
-.mstat-lbl { font-family:var(--mono); font-size:8px; color:var(--text3); letter-spacing:1px; text-transform:uppercase; margin-top:1px; }
+.bstats { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.mstat-val { font-family:var(--display); font-size:17px; }
+.mstat-lbl { font-family:var(--mono); font-size:7px; color:var(--text3); letter-spacing:1px; text-transform:uppercase; margin-top:1px; }
 .ptabs { display:flex; border-bottom:1px solid var(--border); margin-bottom:18px; }
 .ptab { font-family:var(--mono); font-size:11px; letter-spacing:1px; padding:9px 18px; cursor:pointer; color:var(--text2); border-bottom:2px solid transparent; margin-bottom:-1px; transition:all .12s; display:flex; align-items:center; gap:7px; }
 .ptab:hover { color:var(--text); }
@@ -144,6 +148,11 @@ const fmt = n => {
   if (n >= 1000) return (n/1000).toFixed(1)+"K";
   return String(n);
 };
+const fmtNum = n => {
+  if (typeof n === "string") return n;
+  const v = Math.round(Number(n) || 0);
+  return v.toLocaleString();
+};
 
 const TTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -185,19 +194,29 @@ function Pfp({ src, srcs, size = 28, fallback, name }) {
 
 function getAllBrandThumbs(brand, channelData) {
   const urls = [];
-  for (const h of (brand.handles || [])) {
-    const d = channelData[h];
-    if (d?.platform?.thumbnail) urls.push(d.platform.thumbnail);
-    if (d?.channel?.thumbnail) urls.push(d.channel.thumbnail);
+  const tried = new Set();
+  for (const key of (brand.handles || [])) {
+    const d = channelData[key];
+    if (!d) continue;
+    const t1 = d.platform?.thumbnail, t2 = d.channel?.thumbnail;
+    if (t1 && !tried.has(t1)) { urls.push(t1); tried.add(t1); }
+    if (t2 && !tried.has(t2)) { urls.push(t2); tried.add(t2); }
   }
   return urls;
 }
 
-function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync }) {
+function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncErrors }) {
   const [time, setTime] = useState("ALL TIME");
   const { channelData } = useYouTubeContext();
 
-  const allChannels = (brandsFromDb || []).flatMap(b => b.handles.filter(h => b.handleStatus?.[h] !== false).map(h => channelData[h]).filter(Boolean));
+  const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles.filter(h => b.handleStatus?.[h] !== false)))];
+  const keyToBrand = {};
+  (brandsFromDb || []).forEach(b => {
+    b.handles.filter(h => b.handleStatus?.[h] !== false).forEach(h => {
+      if (!keyToBrand[h]) keyToBrand[h] = b.name;
+    });
+  });
+  const allChannels = uniqueKeys.map(h => channelData[h]).filter(Boolean);
   const viewsData = (() => {
     const byDate = {};
     allChannels.forEach(ch => {
@@ -212,10 +231,18 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync }) {
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
   const totalFollowers = allChannels.reduce((s, ch) => s + (ch.platform?.followers || 0), 0);
-  const allPosts = (brandsFromDb || []).flatMap(b => b.handles.filter(h => b.handleStatus?.[h] !== false).flatMap(h => {
+  const allPostsRaw = uniqueKeys.flatMap(h => {
     const ch = channelData[h];
-    return (ch?.posts || []).map(p => ({ ...p, _brand: b.name }));
-  }));
+    return (ch?.posts || []).map(p => ({ ...p, _brand: keyToBrand[h] || "—" }));
+  });
+  const allPosts = (() => {
+    const byId = new Map();
+    allPostsRaw.forEach(p => {
+      const existing = byId.get(p.id);
+      if (!existing || (p.views || 0) > (existing.views || 0)) byId.set(p.id, p);
+    });
+    return Array.from(byId.values());
+  })();
   const avgViews = allPosts.length ? Math.round(allPosts.reduce((s, p) => s + p.views, 0) / allPosts.length) : 0;
   const totalLikes = allPosts.reduce((s, p) => s + (p.likes || 0), 0);
   const totalComments = allPosts.reduce((s, p) => s + (p.cmts || 0), 0);
@@ -234,40 +261,45 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync }) {
   if (!pieData.length) pieData.push({ name: "—", value: 1, color: "#333" });
 
   return (
-    <div>
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
       <div className="topbar">
-        <span className="topbar-title">COMPANY OVERVIEW</span>
+        <span className="topbar-title">OVERVIEW</span>
         <div className="tr">
           <div className="tpill">{["7D","30D","90D","ALL TIME"].map(t=><button key={t} className={`tbtn${time===t?" act":""}`} onClick={()=>setTime(t)}>{t}</button>)}</div>
           <button className="ibtn primary" disabled={syncing} onClick={syncAll}>{syncing ? "SYNCING…" : "⟳ SYNC ALL"}</button>
         </div>
       </div>
-      <div className="page">
+      <div className="page" style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
           {[
-            {l:"Total Views",v:fmt(totalViews),s:"All platforms"},
-            {l:"Followers",v:fmt(totalFollowers),s:"All accounts"},
-            {l:"Avg Views/Post",v:avgViews?fmt(avgViews):"—",s:`${allPosts.length} posts`},
+            {l:"Total Views",v:fmtNum(totalViews),s:"All platforms"},
+            {l:"Followers",v:fmtNum(totalFollowers),s:"All accounts"},
+            {l:"Avg Views/Post",v:avgViews?fmtNum(avgViews):"—",s:`${allPosts.length} posts`},
             {l:"Engagement Rate",v:engagementRate+"%",s:"(Likes+cmts+shares)/views"},
           ].map(k=>(
             <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div><div className="ksub">{k.s}</div></div>
           ))}
         </div>
-        <div className="krow" style={{gridTemplateColumns:"repeat(3,1fr)",marginTop:-6}}>
+        {syncErrors?.length > 0 && (
+          <div className="alert" style={{marginTop:8}}>
+            <span className="alert-txt"><strong>Sync failed for {syncErrors.length} account{syncErrors.length!==1?"s":""}:</strong> {syncErrors.map(e=>e.key).join(", ")} — {syncErrors[0]?.msg}</span>
+          </div>
+        )}
+        <div className="krow" style={{gridTemplateColumns:"repeat(3,1fr)",marginTop:-4}}>
           {[
-            {l:"Total Likes",v:fmt(totalLikes),s:"❤️ All content"},
-            {l:"Comments",v:fmt(totalComments),s:"💬 All content"},
-            {l:"Shares",v:fmt(totalShares),s:"↗️ All content"},
+            {l:"Total Likes",v:fmtNum(totalLikes),s:"❤️ All content"},
+            {l:"Comments",v:fmtNum(totalComments),s:"💬 All content"},
+            {l:"Shares",v:fmtNum(totalShares),s:"↗️ All content"},
           ].map(k=>(
             <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div><div className="ksub">{k.s}</div></div>
           ))}
         </div>
 
-        <div className="g2">
+        <div className="g3">
           <div className="panel">
             <div className="ph"><span className="ptitle">VIEWS OVER TIME</span></div>
             {viewsData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={170}>
+              <ResponsiveContainer width="100%" height={238}>
                 <AreaChart data={viewsData} margin={{top:0,right:0,bottom:0,left:-22}}>
                   <defs>
                     <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
@@ -278,40 +310,45 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync }) {
                   <XAxis dataKey="d" tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false}/>
                   <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
                   <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
-                  <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv)" name="Views" dot={{r:4,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:5,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
+                  <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv)" name="Views" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div style={{height:170,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Views chart builds over time as you sync daily.</div>
+              <div style={{height:238,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Views chart builds over time as you sync daily.</div>
             )}
           </div>
-          <div className="panel" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,alignItems:"stretch",minHeight:170}}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",width:"100%"}}>
-              <div className="ptitle" style={{fontSize:12,marginBottom:4,alignSelf:"stretch"}}>PLATFORM SPLIT</div>
-              <ResponsiveContainer width={180} height={150}>
-                <PieChart>
-                  <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius={55} outerRadius={70} strokeWidth={0}
-                    label={({name,percent,cx,cy,midAngle,innerRadius,outerRadius})=>{
-                      const R=Math.PI/180; const r=(innerRadius+outerRadius)/2+12;
-                      const x=cx+r*Math.cos(-midAngle*R), y=cy+r*Math.sin(-midAngle*R);
-                      return <text x={x} y={y} fill="#f5f2ed" textAnchor="middle" dominantBaseline="central" style={{fontSize:14,fontFamily:"DM Mono",fontWeight:500}}>{name} {(percent*100).toFixed(0)}%</text>;
-                    }} labelLine={false}
-                  >
-                    {pieData.map((d,i) => <Cell key={i} fill={d.color}/>)}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <div className="ptitle" style={{fontSize:12,marginBottom:4}}>TOP POSTS</div>
+          <div className="panel" style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+            <div className="ptitle" style={{alignSelf:"stretch",marginBottom:4}}>PLATFORM SPLIT</div>
+            <ResponsiveContainer width="100%" height={238}>
+              <PieChart>
+                <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius={68} outerRadius={94} strokeWidth={0}
+                  label={({name,percent,cx,cy,midAngle,innerRadius,outerRadius})=>{
+                    const R=Math.PI/180; const r=(innerRadius+outerRadius)/2+12;
+                    const x=cx+r*Math.cos(-midAngle*R), y=cy+r*Math.sin(-midAngle*R);
+                    return <text x={x} y={y} fill="#f5f2ed" textAnchor="middle" dominantBaseline="central" style={{fontSize:11,fontFamily:"DM Mono",fontWeight:500}}>{name} {(percent*100).toFixed(0)}%</text>;
+                  }} labelLine={false}
+                >
+                  {pieData.map((d,i) => <Cell key={i} fill={d.color}/>)}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="panel" style={{display:"flex",flexDirection:"column"}}>
+            <div className="ptitle" style={{marginBottom:6,flexShrink:0}}>TOP POSTS</div>
+            <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:4,minHeight:0}}>
               {(() => {
-                const top2 = [...allPosts].sort((a,b) => b.views - a.views).slice(0,2);
-                if (!top2.length) return <div style={{fontSize:10,color:"var(--text3)",padding:"8px 0"}}>Sync an account to see top posts</div>;
-                return top2.map(p => (
-                  <div key={p.id} style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:4,padding:8,borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":"var(--red)"}`,flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-                    <div style={{fontSize:9,color:"var(--text3)",marginBottom:2}}>{p._brand} · {p.plat==="tt"?"🎵":"▶️"}</div>
-                    <div style={{fontSize:10,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.cap}</div>
-                    <div style={{fontFamily:"var(--display)",fontSize:15,color:"var(--text)",marginTop:2}}>{fmt(p.views)} views</div>
+                const ranked = [...allPosts].sort((a,b) => b.views - a.views);
+                if (!ranked.length) return <div style={{fontSize:10,color:"var(--text3)",padding:"8px 0"}}>Sync an account to see top posts</div>;
+                return ranked.map((p,i) => (
+                  <div key={p.id} style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:3,padding:"6px 8px",borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":"var(--red)"}`,flexShrink:0}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:5}}>
+                      <span style={{fontFamily:"var(--display)",fontSize:13,color:"var(--text3)",minWidth:14}}>#{i+1}</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:9,color:"var(--text3)"}}>{p._brand} · {p.plat==="tt"?"🎵":"▶️"}</div>
+                        <div style={{fontSize:10,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.cap}</div>
+                      </div>
+                      <span style={{fontFamily:"var(--display)",fontSize:14,color:"var(--text)",flexShrink:0}}>{fmt(p.views)}</span>
+                    </div>
                   </div>
                 ));
               })()}
@@ -319,12 +356,12 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync }) {
           </div>
         </div>
 
-        <div className="sh" style={{marginBottom:12}}>
+        <div className="sh" style={{marginBottom:6,flexShrink:0}}>
           <span className="sht">BRANDS</span>
           <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text3)"}}>{(brandsFromDb||[]).length} brands</span>
         </div>
 
-        <div className="bgrid">
+        <div className="bgrid" style={{flex:1,minHeight:0,overflowY:"auto",alignContent:"start"}}>
           {!(brandsFromDb||[]).length ? (
             <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--text3)",border:"1px dashed var(--border2)",borderRadius:5}}>
               <div style={{fontSize:14,marginBottom:8}}>No brands yet</div>
@@ -350,14 +387,14 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync }) {
                   <div><div className="mstat-val">{fmt(brandFollowers)}</div><div className="mstat-lbl">Followers</div></div>
                   <div><div className="mstat-val">{fmt(brandViews)}</div><div className="mstat-lbl">Views</div></div>
                 </div>
-                <div style={{display:"flex",gap:8,marginTop:10}}>
+                <div style={{display:"flex",gap:6,marginTop:6}}>
                   {platforms.map(pt => (
-                    <div key={pt} style={{display:"flex",alignItems:"center",gap:3,fontFamily:"DM Mono",fontSize:8}}>
+                    <div key={pt} style={{display:"flex",alignItems:"center",gap:3,fontFamily:"DM Mono",fontSize:7}}>
                       <div className="hdot hg"/>
                       <span style={{color:"#444"}}>{pt==="tiktok"?"TT":"YT"}</span>
                     </div>
                   ))}
-                  <span style={{fontFamily:"DM Mono",fontSize:8,color:"#333",marginLeft:"auto"}}>{b.handles.length} acct{b.handles.length!==1?"s":""}</span>
+                  <span style={{fontFamily:"DM Mono",fontSize:7,color:"#333",marginLeft:"auto"}}>{b.handles.length} acct{b.handles.length!==1?"s":""}</span>
                 </div>
               </div>
             );
@@ -374,12 +411,20 @@ function BrandView({ brandId, onBack, brands }) {
   const [time, setTime] = useState("ALL TIME");
   if (!dbBrand) return null;
 
-  const activeHandles = dbBrand.handles.filter(h => dbBrand.handleStatus?.[h] !== false);
-  const chData = activeHandles.map(h => channelData[h]).filter(Boolean);
+  const activeHandles = [...new Set(dbBrand.handles.filter(key => dbBrand.handleStatus?.[key] !== false))];
+  const chData = activeHandles.map(key => channelData[key]).filter(Boolean);
   const hasChannelData = chData.length > 0;
   const totalFollowers = chData.reduce((s, c) => s + (c.platform?.followers || 0), 0);
   const totalViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
-  const posts = chData.flatMap(c => c.posts || []);
+  const postsRaw = chData.flatMap(c => c.posts || []);
+  const posts = (() => {
+    const byId = new Map();
+    postsRaw.forEach(p => {
+      const existing = byId.get(p.id);
+      if (!existing || (p.views || 0) > (existing.views || 0)) byId.set(p.id, p);
+    });
+    return Array.from(byId.values());
+  })();
   posts.sort((a, b) => (b.views || 0) - (a.views || 0));
   const avgV = posts.length ? Math.round(posts.reduce((s, p) => s + p.views, 0) / posts.length) : 0;
   const totalLikes = posts.reduce((s, p) => s + (p.likes || 0), 0);
@@ -459,13 +504,15 @@ function BrandView({ brandId, onBack, brands }) {
           <div className="panel">
             <div className="ph"><span className="ptitle">ACCOUNTS</span></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {dbBrand.handles.map(h => {
-                const c = channelData[h];
+              {dbBrand.handles.map(key => {
+                const c = channelData[key];
+                const { handle: rawH, platform: rawP } = pk(key);
+                const showName = c?.platform?.displayName || c?.platform?.handle || rawH;
                 return (
-                  <div key={h} style={{display:"flex",alignItems:"center",gap:8,padding:6,background:"var(--surface2)",borderRadius:3,border:"1px solid var(--border)"}}>
-                    <Pfp src={c?.platform?.thumbnail || c?.channel?.thumbnail} size={22} name={c?.platform?.displayName || c?.platform?.handle || h}/>
+                  <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:6,background:"var(--surface2)",borderRadius:3,border:"1px solid var(--border)"}}>
+                    <Pfp src={c?.platform?.thumbnail || c?.channel?.thumbnail} size={22} name={showName}/>
                     <div>
-                      <div style={{fontSize:10,fontWeight:500}}>{c?.platform?.displayName || c?.platform?.handle || h}</div>
+                      <div style={{fontSize:10,fontWeight:500}}>{showName} <span style={{fontSize:8,color:"#555"}}>{rawP==="tiktok"?"🎵":"▶️"}</span></div>
                       <div style={{fontFamily:"DM Mono",fontSize:8,color:"#555"}}>{c ? fmt(c.platform?.followers || 0) + " followers" : "not synced"}</div>
                     </div>
                   </div>
@@ -543,9 +590,9 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
     setSyncLoading(true); setSyncError(null);
     try {
       const entry = await fetchChannel(syncHandle.trim(), syncPlatform, true);
-      const handle = entry?.channel?.handle || entry?.platform?.handle || entry?.channel?.title;
-      if (handle) {
-        await addHandleToBrand(targetBrandId, handle, syncPlatform);
+      const rawHandle = entry?.channel?.handle || entry?.platform?.handle || entry?.channel?.title;
+      if (rawHandle) {
+        await addHandleToBrand(targetBrandId, rawHandle, syncPlatform);
         setSyncHandle("");
       }
     } catch (e) { setSyncError(e.message); }
@@ -576,17 +623,18 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                 <button className="ibtn danger" style={{padding:"3px 8px",fontSize:9}} onClick={async () => await removeBrand(b.id)}>✕ Remove</button>
               </div>
               <div style={{padding:12}}>
-                {b.handles.map(h => {
-                  const d = channelData[h];
-                  const pt = d?.platform?.platformType || d?.channel?.platform || "youtube";
-                  const apiHandle = d?.channel?.handle || d?.platform?.handle || h;
-                  const showName = d?.platform?.displayName || d?.channel?.title || h;
-                  const isActive = b.handleStatus?.[h] !== false;
+                {b.handles.map(key => {
+                  const d = channelData[key];
+                  const { handle: rawHandle, platform: rawPlat } = pk(key);
+                  const pt = d?.platform?.platformType || rawPlat;
+                  const apiHandle = d?.channel?.handle || d?.platform?.handle || rawHandle;
+                  const showName = d?.platform?.displayName || d?.channel?.title || rawHandle;
+                  const isActive = b.handleStatus?.[key] !== false;
                   return (
-                    <div key={h} className="arow" style={!isActive ? {opacity:.45} : undefined}>
+                    <div key={key} className="arow" style={!isActive ? {opacity:.45} : undefined}>
                       <Pfp src={d?.platform?.thumbnail || d?.channel?.thumbnail} size={28} name={showName}/>
                       <div className="ainfo">
-                        <div className="ahandle">{showName}</div>
+                        <div className="ahandle">{showName} <span style={{fontSize:9,color:"#555"}}>{rawPlat==="tiktok"?"🎵":"▶️"}</span></div>
                         <div className="atag">{!isActive ? "deactivated" : d ? pt : "not synced"}</div>
                       </div>
                       <div className="ameta">
@@ -594,9 +642,9 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                         <span className={`chip ${isActive ? (d ? "cig" : "ctt") : "ctt"}`}>{isActive ? (d ? "ACTIVE" : "SYNC NEEDED") : "INACTIVE"}</span>
                       </div>
                       <div className="aacts">
-                        <button className="ibtn" title={isActive ? "Deactivate" : "Activate"} onClick={() => toggleActive(b.id, h, !isActive)} style={!isActive ? {color:"var(--green)",borderColor:"rgba(0,184,148,.3)"} : {}}>{isActive ? "⏸" : "▶"}</button>
-                        {isActive && <button className="ibtn" title="Re-sync" onClick={async () => { setSyncLoading(true); setSyncError(null); try { await fetchChannel(apiHandle, pt, true); } catch (e) { setSyncError(e.message); } setSyncLoading(false); }}>⟳</button>}
-                        <button className="ibtn danger" onClick={async () => { removeChannel(h); await removeHandleFromBrand(b.id, h); }}>✕</button>
+                        <button className="ibtn" title={isActive ? "Deactivate" : "Activate"} onClick={() => toggleActive(b.id, key, !isActive)} style={!isActive ? {color:"var(--green)",borderColor:"rgba(0,184,148,.3)"} : {}}>{isActive ? "⏸" : "▶"}</button>
+                        {isActive && <button className="ibtn" title="Re-sync" onClick={async () => { setSyncLoading(true); setSyncError(null); try { await fetchChannel(apiHandle, rawPlat, true); } catch (e) { setSyncError(e.message); } setSyncLoading(false); }}>⟳</button>}
+                        <button className="ibtn danger" onClick={async () => { removeChannel(key); await removeHandleFromBrand(b.id, rawHandle, rawPlat); }}>✕</button>
                       </div>
                     </div>
                   );
@@ -667,9 +715,7 @@ export default function App() {
   const go = (p, id = null) => { const next = { page: p, brandId: id ?? (p === "brand" ? brandId : null) }; setNav(next); saveNav(next.page, next.brandId); };
 
   const getBrandNameForChannel = (ch) => {
-    const h = ch?.platform?.handle || ch?.channel?.handle || ch?.channel?.title || ch?.handle;
-    const name = ch?.platform?.displayName || ch?.channel?.title || h;
-    for (const b of brands) { if (b.handles.includes(h) || b.handles.includes(name)) return b.name; }
+    const name = ch?.platform?.displayName || ch?.channel?.title || ch?.platform?.handle;
     return name;
   };
 
@@ -677,10 +723,10 @@ export default function App() {
     const loadAndRefetch = (brandsData, meta = {}) => {
       setBrands(brandsData);
       setChannelMeta(meta);
-      const handles = [...new Set(brandsData.flatMap(b => b.handles))];
-      return Promise.all(handles.map(h => {
-        const plat = meta[h]?.platform || "youtube";
-        return fetchChannel(h, plat).catch(() => null);
+      const keys = [...new Set(brandsData.flatMap(b => b.handles))];
+      return Promise.all(keys.map(key => {
+        const { handle, platform } = pk(key);
+        return fetchChannel(handle, platform).catch(() => null);
       }));
     };
     if (isSupabaseConfigured()) {
@@ -702,39 +748,65 @@ export default function App() {
 
   const removeBrand = useCallback(async (id, removeChannelFn) => {
     const b = brands.find(x => x.id === id);
-    if (b?.handles) b.handles.forEach(h => removeChannelFn?.(h));
+    if (b?.handles) b.handles.forEach(key => removeChannelFn?.(key));
     if (isSupabaseConfigured()) await dbDeleteBrand(id);
     setBrands(prev => { const next = prev.filter(x => x.id !== id); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, [brands]);
 
   const addHandleToBrand = useCallback(async (brandId, handle, platform = "youtube") => {
     if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, platform);
-    setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, handle])] } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
+    const key = ck(handle, platform);
+    setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, key])], handleStatus: { ...b.handleStatus, [key]: true } } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, []);
 
-  const removeHandleFromBrand = useCallback(async (brandId, handle) => {
-    if (isSupabaseConfigured()) await dbRemoveChannelFromBrand(brandId, handle);
-    setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: b.handles.filter(h => h !== handle) } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
+  const removeHandleFromBrand = useCallback(async (brandId, handle, platform) => {
+    if (isSupabaseConfigured()) await dbRemoveChannelFromBrand(brandId, handle, platform);
+    const key = ck(handle, platform);
+    setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: b.handles.filter(h => h !== key) } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, []);
 
-  const toggleActive = useCallback(async (brandId, handle, active) => {
-    if (isSupabaseConfigured()) await dbToggleChannelActive(brandId, handle, active);
-    setBrands(prev => prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [handle]: active } } : b));
+  const toggleActive = useCallback(async (brandId, key, active) => {
+    const { handle, platform } = pk(key);
+    if (isSupabaseConfigured()) await dbToggleChannelActive(brandId, handle, platform, active);
+    setBrands(prev => prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b));
   }, []);
 
+  const LAST_REFRESH_KEY = "tambareni-last-refresh";
   const [syncing, setSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState(null);
+  const [lastSync, setLastSync] = useState(() => {
+    try {
+      const s = localStorage.getItem(LAST_REFRESH_KEY);
+      if (s) return new Date(s);
+      const now = new Date();
+      localStorage.setItem(LAST_REFRESH_KEY, now.toISOString());
+      return now;
+    } catch { return new Date(); }
+  });
+  const [syncErrors, setSyncErrors] = useState([]);
   const syncAll = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
-    const handles = [...new Set(brands.flatMap(b => b.handles.filter(h => b.handleStatus?.[h] !== false)))];
-    for (const h of handles) {
-      const plat = channelMeta[h]?.platform || "youtube";
-      try { await fetchChannel(h, plat, true); } catch {}
+    setSyncErrors([]);
+    try {
+      const keys = [...new Set(brands.flatMap(b => b.handles.filter(key => b.handleStatus?.[key] !== false)))];
+      const errs = [];
+      for (const key of keys) {
+        const { handle, platform } = pk(key);
+        try {
+          await fetchChannel(handle, platform, true, true);
+        } catch (e) {
+          errs.push({ key, msg: e?.message || String(e) });
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      setSyncErrors(errs);
+      const now = new Date();
+      setLastSync(now);
+      try { localStorage.setItem(LAST_REFRESH_KEY, now.toISOString()); } catch {}
+    } finally {
+      setSyncing(false);
     }
-    setLastSync(new Date());
-    setSyncing(false);
-  }, [brands, channelMeta, fetchChannel, syncing]);
+  }, [brands, fetchChannel, syncing]);
 
   const SYNC_KEY = "tambareni-last-auto-sync";
   useEffect(() => {
@@ -784,12 +856,12 @@ export default function App() {
           </div>
           <div style={{marginTop:"auto",padding:"14px 18px",borderTop:"1px solid var(--border)"}}>
             <div style={{fontFamily:"DM Mono",fontSize:8,color:"#333",letterSpacing:2}}>
-              {lastSync ? <>LAST SYNC<br/><span style={{color:"#555",fontSize:9}}>{lastSync.toLocaleTimeString()}</span></> : <>AUTO-SYNC<br/><span style={{color:"#555",fontSize:9}}>Daily at 11:59 PM</span></>}
+              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Auto-sync: 11:59 PM daily</span></>
             </div>
           </div>
         </div>
         <div className="main" onMouseDown={e => { const el = document.activeElement, t = e.target; if ((el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") && !t.closest("input,textarea,select,button")) el.blur(); }}>
-          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} syncAll={syncAll} syncing={syncing} lastSync={lastSync}/>}
+          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors}/>}
           {page === "brand" && <BrandView brandId={brandId} onBack={() => go("overview")} brands={brands}/>}
           {page === "settings" && <Settings brands={brands} brandsLoading={brandsLoading} addBrand={addBrand} removeBrand={id => removeBrand(id, removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel} toggleActive={toggleActive}/>}
         </div>

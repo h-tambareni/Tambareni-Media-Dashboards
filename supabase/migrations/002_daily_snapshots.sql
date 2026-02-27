@@ -17,6 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_snapshots_date ON daily_snapshots(snapshot_
 
 -- Update brand_channels to support multiple platforms + active toggle
 ALTER TABLE brand_channels DROP CONSTRAINT IF EXISTS brand_channels_brand_id_channel_handle_key;
+ALTER TABLE brand_channels DROP CONSTRAINT IF EXISTS brand_channels_brand_platform_handle_key;
 ALTER TABLE brand_channels ADD CONSTRAINT brand_channels_brand_platform_handle_key UNIQUE(brand_id, channel_handle, platform);
 ALTER TABLE brand_channels ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
 

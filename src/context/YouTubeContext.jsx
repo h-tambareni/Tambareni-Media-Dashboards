@@ -2,13 +2,16 @@
  * Platform context — fetches channel + video data via ScrapeCreators API.
  * Supports YouTube and TikTok. Caches snapshots in Supabase channel_cache.
  * Stores daily view totals for views-over-time chart.
+ *
+ * channelData keys use composite format: "handle::platform"
  */
 import { createContext, useContext, useState, useCallback } from "react";
 import { fetchYTChannel, fetchYTChannelVideos, fetchTTProfile, fetchTTProfileVideos } from "../lib/scrapeCreators";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
-  getCachedChannel, isCacheFresh, parseCachedSnapshot,
+  getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
   upsertChannelCache, upsertDailySnapshot, fetchDailySnapshots,
+  ck,
 } from "../lib/supabaseDb";
 
 const PlatformContext = createContext(null);
@@ -19,52 +22,57 @@ export function YouTubeProvider({ children }) {
   const [channels, setChannels] = useState({});
   const [connectedHandles, setConnectedHandles] = useState([]);
 
-  const removeChannel = useCallback((handleOrName) => {
+  const removeChannel = useCallback((compositeKey) => {
     setChannels((prev) => {
       const next = { ...prev };
-      Object.keys(next).forEach((k) => {
-        if (next[k].platform?.handle === handleOrName || next[k].channel?.title === handleOrName || k === handleOrName) delete next[k];
-      });
+      delete next[compositeKey];
       return next;
     });
-    setConnectedHandles((prev) => prev.filter((h) => h !== handleOrName));
+    setConnectedHandles((prev) => prev.filter((h) => h !== compositeKey));
   }, []);
 
   const fetchChannel = useCallback(
-    async (handleOrName, platformHint = "youtube", forceRefresh = false) => {
+    async (handleOrName, platformHint = "youtube", forceRefresh = false, forceFullFetch = false) => {
       if (!apiKey) throw new Error("VITE_SCRAPECREATORS_API_KEY not set");
       const handle = (handleOrName?.trim() || "").replace(/^@/, "");
       const plat = platformHint || "youtube";
-      const cacheKey = `${handle}:${plat}:${forceRefresh}`;
+      const compositeKey = ck(handle, plat);
+      const flightKey = `${compositeKey}:${forceRefresh}`;
 
-      const existing = inFlight.get(cacheKey);
+      const existing = inFlight.get(flightKey);
       if (existing) return existing;
 
       const doFetch = async () => {
         try {
+          const cacheKey = compositeKey;
           if (isSupabaseConfigured() && !forceRefresh) {
-            const cached = await getCachedChannel(handle);
+            const cached = await getCachedChannelWithFallback(handle, plat);
             if (isCacheFresh(cached)) {
               const snap = parseCachedSnapshot(cached);
               if (snap) {
-                const keys = [snap.channel?.title, snap.channel?.handle, handle].filter(Boolean);
-                setChannels((prev) => { const n = { ...prev }; keys.forEach(k => n[k] = snap); return n; });
-                setConnectedHandles((prev) => prev.includes(handle) ? prev : [...prev, handle]);
+                setChannels((prev) => ({ ...prev, [compositeKey]: snap }));
+                setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
                 return snap;
               }
             }
           }
 
+          const cachedSnap = isSupabaseConfigured() ? parseCachedSnapshot(await getCachedChannelWithFallback(handle, plat)) : null;
+          const cachedPosts = cachedSnap?.posts || [];
+          const lastFullFetch = cachedSnap?.last_full_fetch_at ? new Date(cachedSnap.last_full_fetch_at) : null;
+          const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+          const needsFullFetch = forceFullFetch || cachedPosts.length === 0 || !lastFullFetch || lastFullFetch.getTime() < weekAgo;
+
           let ch, videos;
           if (plat === "tiktok") {
             ch = await fetchTTProfile(apiKey, handle);
-            videos = await fetchTTProfileVideos(apiKey, handle);
+            videos = await fetchTTProfileVideos(apiKey, ch.handle || handle, { fullFetch: needsFullFetch, userId: ch.id });
           } else {
             ch = await fetchYTChannel(apiKey, handle);
-            videos = await fetchYTChannelVideos(apiKey, handle);
+            videos = await fetchYTChannelVideos(apiKey, handle, { fullFetch: needsFullFetch });
           }
 
-          const posts = videos.map(v => ({
+          const newPostsRaw = videos.map(v => ({
             id: v.id,
             cap: v.title || "(Untitled)",
             views: v.views ?? 0,
@@ -76,10 +84,29 @@ export function YouTubeProvider({ children }) {
             thumbnail: v.thumbnail,
             publishedAt: v.publishedAt,
           }));
+          const newPosts = (() => {
+            const byId = new Map();
+            newPostsRaw.forEach(p => {
+              const existing = byId.get(p.id);
+              if (!existing || (p.views || 0) > (existing.views || 0)) byId.set(p.id, p);
+            });
+            return Array.from(byId.values());
+          })();
+
+          let posts;
+          if (needsFullFetch) {
+            posts = newPosts;
+          } else {
+            const byId = new Map(cachedPosts.map(p => [p.id, { ...p }]));
+            for (const p of newPosts) {
+              byId.set(p.id, p);
+            }
+            posts = Array.from(byId.values());
+          }
 
           posts.sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
           const postViews = posts.reduce((s, p) => s + p.views, 0);
-          const totalV = ch.viewCount || postViews;
+          const totalV = Math.max(ch.viewCount || 0, postViews);
           const avgV = posts.length ? Math.round(postViews / posts.length) : 0;
           const lastPost = posts[0];
 
@@ -110,14 +137,14 @@ export function YouTubeProvider({ children }) {
             posts,
             totalViews: totalV,
             dailyViews,
+            last_full_fetch_at: needsFullFetch ? new Date().toISOString() : (cachedSnap?.last_full_fetch_at || null),
           };
 
-          const keys = [ch.title, ch.handle, handle].filter(Boolean);
-          setChannels((prev) => { const n = { ...prev }; keys.forEach(k => n[k] = entry); return n; });
-          setConnectedHandles((prev) => prev.includes(handle) || prev.includes(ch.title) ? prev : [...prev, handle || ch.title]);
+          setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
+          setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
 
           if (isSupabaseConfigured()) {
-            upsertChannelCache(handle, entry).catch(() => {});
+            upsertChannelCache(cacheKey, entry).catch(() => {});
             upsertDailySnapshot(handle, plat, {
               totalViews: totalV,
               followers: ch.subscribers,
@@ -126,11 +153,11 @@ export function YouTubeProvider({ children }) {
           }
           return entry;
         } finally {
-          inFlight.delete(cacheKey);
+          inFlight.delete(flightKey);
         }
       };
       const p = doFetch();
-      inFlight.set(cacheKey, p);
+      inFlight.set(flightKey, p);
       return p;
     },
     [apiKey]
