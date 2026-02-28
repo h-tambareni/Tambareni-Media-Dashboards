@@ -11,7 +11,7 @@ import { fetchInstagramDirect, hasInstagramTokens } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
-  upsertChannelCache, upsertDailySnapshot, fetchDailySnapshots,
+  upsertChannelCache, deleteChannelCache, upsertDailySnapshot, fetchDailySnapshots,
   ck,
 } from "../lib/supabaseDb";
 
@@ -44,6 +44,11 @@ export function YouTubeProvider({ children }) {
         if (existing) return existing;
         const doFetch = async () => {
           try {
+            if (forceRefresh && isSupabaseConfigured()) {
+              await deleteChannelCache(compositeKey);
+              const rawNorm = (handle || "").toString().trim().toLowerCase().replace(/^@/, "");
+              if (rawNorm !== compositeKey) await deleteChannelCache(rawNorm);
+            }
             if (isSupabaseConfigured() && !forceRefresh) {
               const cached = await getCachedChannelWithFallback(handle, plat);
               if (isCacheFresh(cached)) {

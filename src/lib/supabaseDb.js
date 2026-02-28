@@ -144,6 +144,11 @@ export function parseCachedSnapshot(cached) {
   return snap;
 }
 
+export async function deleteChannelCache(channelHandle) {
+  if (!isSupabaseConfigured()) return;
+  await supabase.from("channel_cache").delete().eq("channel_handle", channelHandle);
+}
+
 export async function upsertChannelCache(channelHandle, snapshot) {
   if (!isSupabaseConfigured()) return;
   await supabase.from("channel_cache").upsert({

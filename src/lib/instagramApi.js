@@ -22,7 +22,9 @@ function getTokenMap() {
 export function getInstagramToken(handle) {
   const h = (handle || "").toLowerCase().replace(/^@/, "");
   const map = getTokenMap();
-  return map[h] || Object.values(map)[0] || null;
+  const token = map[h];
+  if (!token) return null;
+  return token;
 }
 
 export function hasInstagramTokens() {
@@ -44,6 +46,33 @@ export async function fetchInstagramDirect(handle) {
   if (me.error) throw new Error(me.error.message || "Instagram API error");
 
   const userId = me.id;
+  let followersCount = me.followers_count;
+
+  // /me often omits followers_count (common with Instagram Login tokens).
+  // Try graph.instagram.com/{id} then graph.facebook.com/{id} (IG User supports both hosts).
+  const parseCount = (v) => {
+    if (v == null || v === undefined) return null;
+    const n = typeof v === "number" ? v : parseInt(String(v), 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  followersCount = parseCount(followersCount);
+  if (followersCount == null) {
+    for (const base of [
+      `https://graph.instagram.com/v25.0/${userId}?fields=followers_count`,
+      `https://graph.facebook.com/v25.0/${userId}?fields=followers_count`,
+    ]) {
+      try {
+        const r = await fetch(`${base}&access_token=${token}`);
+        const j = await r.json();
+        const val = j?.followers_count;
+        if (val != null) {
+          followersCount = parseCount(val);
+          if (followersCount != null) break;
+        }
+      } catch {}
+    }
+  }
+  if (followersCount == null) followersCount = 0;
 
   const mediaRes = await fetch(
     `${IG_API}/${userId}/media?fields=id,media_type,media_url,thumbnail_url,timestamp,caption,like_count,comments_count&limit=50&access_token=${token}`
@@ -68,7 +97,7 @@ export async function fetchInstagramDirect(handle) {
   };
 
   const postsWithViews = await Promise.all(
-    mediaList.slice(0, 25).map(async (m) => {
+    mediaList.slice(0, 50).map(async (m) => {
       const views = await fetchViews(m.id, m.media_type);
       return {
         id: m.id,
@@ -93,7 +122,7 @@ export async function fetchInstagramDirect(handle) {
       id: userId,
       handle: me.username,
       title: me.name || me.username,
-      subscribers: me.followers_count ?? 0,
+      subscribers: followersCount,
       viewCount: totalViews,
       videoCount: me.media_count ?? 0,
       thumbnail: me.profile_picture_url,
@@ -102,7 +131,7 @@ export async function fetchInstagramDirect(handle) {
     platform: {
       handle: me.username,
       displayName: me.name || me.username,
-      followers: me.followers_count ?? 0,
+      followers: followersCount,
       channelId: userId,
       thumbnail: me.profile_picture_url,
       platformType: "instagram",

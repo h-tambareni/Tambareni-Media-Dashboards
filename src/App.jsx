@@ -200,6 +200,7 @@ const TTip = ({ active, payload, label }) => {
 };
 
 const platEmoji = {youtube:"▶️",tiktok:"🎵"};
+const getFollowers = (c) => (c?.platform?.followers ?? c?.channel?.subscribers ?? 0) || 0;
 const platColors = {youtube:"#ff6b6b",tiktok:"#69c9d0"};
 
 const fbGradients = [
@@ -315,7 +316,7 @@ function getAllBrandThumbs(brand, channelData) {
   return urls;
 }
 
-function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, lastSync, syncErrors }) {
+function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, lastSync, syncErrors, onAccounts }) {
   const { channelData } = useYouTubeContext();
 
   const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles))];
@@ -329,10 +330,12 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
   });
   const allChannels = uniqueKeys.map(h => channelData[h]).filter(Boolean);
   const viewsData = (() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
     const byDate = {};
     allChannels.forEach(ch => {
       (ch.dailyViews || []).forEach(row => {
         const key = row.raw || row.d;
+        if (key === todayStr) return;
         if (!byDate[key]) byDate[key] = { d: row.d, raw: key, cumViews: 0 };
         byDate[key].cumViews += (row.views || 0);
       });
@@ -354,7 +357,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
   })();
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
-  const totalFollowers = allChannels.reduce((s, ch) => s + (ch.platform?.followers || 0), 0);
+  const totalFollowers = allChannels.reduce((s, ch) => s + getFollowers(ch), 0);
   const allPostsRaw = uniqueKeys.flatMap(h => {
     const ch = channelData[h];
     return (ch?.posts || []).map(p => ({ ...p, _brand: keyToBrand[h] || "—" }));
@@ -390,9 +393,10 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
   return (
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
       <div className="topbar">
-        <span className="topbar-title">OVERVIEW</span>
+        <span className="topbar-title">SOCIAL MEDIA ANALYTICS</span>
         <div className="tr">
           <button className="ibtn primary" disabled={syncing} onClick={syncAll}>{syncing ? "SYNCING…" : "⟳ SYNC ALL"}</button>
+          <button className="ibtn" onClick={onAccounts}>Accounts</button>
         </div>
       </div>
       <div className="page" style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
@@ -504,7 +508,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
           ) : (brandsFromDb||[]).map(b => {
             const allHandles = b.handles;
             const chData = allHandles.map(h => channelData[h]).filter(Boolean);
-            const brandFollowers = chData.reduce((s, c) => s + (c.platform?.followers || 0), 0);
+            const brandFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
             const brandViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
             const thumbs = getAllBrandThumbs(b, channelData);
             const hasData = chData.length > 0;
@@ -516,7 +520,6 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
             if (hasTT) cols.push({ pt: "tiktok", name: "TikTok" });
             if (hasYT) cols.push({ pt: "youtube", name: "YouTube" });
             if (hasIG) cols.push({ pt: "instagram", name: "Instagram" });
-            if (allHandles.length >= 2) cols.push({ pt: "total", name: "TOTAL" });
             const boxStyle = { flex: "0 0 calc((100% - 16px) / 3)", minWidth: 0 };
             return (
               <div key={b.id} className={`bcard${!hasData?" dead":""}`} onClick={() => onBrand(b.id)}>
@@ -525,31 +528,28 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
                     <Pfp srcs={thumbs} size={32} name={b.name}/>
                     <span className="bcard-name">{b.name}</span>
                   </div>
-                  <span className={`bstatus ${allInactive?"s-dead":hasData?"s-active":"s-dead"}`}>{allInactive?"inactive":hasData?"active":"sync needed"}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    {hasData && (
+                      <div style={{display:"flex",alignItems:"baseline",gap:12}}>
+                        <div style={{textAlign:"center"}}>
+                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandFollowers} spinning={!dataReady} magnitude={1e4} /></div>
+                          <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
+                        </div>
+                        <div style={{textAlign:"center"}}>
+                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandViews} spinning={!dataReady} magnitude={1e6} /></div>
+                          <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
+                        </div>
+                      </div>
+                    )}
+                    <span className={`bstatus ${allInactive?"s-dead":hasData?"s-active":"s-dead"}`}>{allInactive?"inactive":hasData?"active":"sync needed"}</span>
+                  </div>
                 </div>
                 {cols.length > 0 && (
                 <div style={{display:"flex",justifyContent:"center",flexWrap:"wrap",gap:8,marginTop:8}}>
                   {cols.map(({ pt, name }) => {
-                    if (pt === "total") {
-                      return (
-                        <div key="total" style={{...boxStyle,display:"flex",flexDirection:"column",alignItems:"center",padding:"8px 6px",background:"var(--surface2)",borderRadius:4,border:"1px solid var(--border)"}}>
-                          <div style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--text3)",marginBottom:6}}>TOTAL</div>
-                          <div style={{display:"flex",width:"100%",alignItems:"baseline"}}>
-                            <div style={{flex:1,textAlign:"center",paddingRight:8,borderRight:"1px solid var(--border2)"}}>
-                              <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandFollowers} spinning={!dataReady} magnitude={1e4} /></div>
-                              <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
-                            </div>
-                            <div style={{flex:1,textAlign:"center",paddingLeft:8}}>
-                              <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandViews} spinning={!dataReady} magnitude={1e6} /></div>
-                              <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
                     const ptHandles = allHandles.filter(h => (h.includes("::") ? h.split("::")[1] : "youtube") === pt);
                     const ptChData = ptHandles.map(h => channelData[h]).filter(Boolean);
-                    const followers = ptChData.reduce((s, c) => s + (c.platform?.followers || 0), 0);
+                    const followers = ptChData.reduce((s, c) => s + getFollowers(c), 0);
                     const views = ptChData.reduce((s, c) => s + (c.totalViews || 0), 0);
                     const ptBadges = ptHandles.map(key => ({ key, isActive: b.handleStatus?.[key] !== false }));
                     return (
@@ -586,7 +586,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
   );
 }
 
-function BrandView({ brandId, onBack, brands }) {
+function BrandView({ brandId, onBack, brands, onAccounts }) {
   const { channelData } = useYouTubeContext();
   const dbBrand = brands?.find(b => b.id === brandId);
   if (!dbBrand) return null;
@@ -594,7 +594,7 @@ function BrandView({ brandId, onBack, brands }) {
   const allHandles = dbBrand.handles;
   const chData = allHandles.map(key => channelData[key]).filter(Boolean);
   const hasChannelData = chData.length > 0;
-  const totalFollowers = chData.reduce((s, c) => s + (c.platform?.followers || 0), 0);
+  const totalFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
   const totalViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
   const postsRaw = chData.flatMap(c => c.posts || []);
   const posts = (() => {
@@ -612,7 +612,8 @@ function BrandView({ brandId, onBack, brands }) {
   const thumbs = getAllBrandThumbs(dbBrand, channelData);
   const platforms = [...new Set(chData.map(c => c.platform?.platformType || c.channel?.platform || "youtube"))];
 
-  const dailyViews = chData.flatMap(c => c.dailyViews || []);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dailyViews = chData.flatMap(c => c.dailyViews || []).filter(row => row.raw !== todayStr);
   const wklyData = (() => {
     const byWeek = {};
     dailyViews.forEach(row => {
@@ -634,6 +635,7 @@ function BrandView({ brandId, onBack, brands }) {
           {platforms.map(pt => <span key={pt} className={`chip ${pt==="tiktok"?"ctt":pt==="instagram"?"cig-insta":"cyt"}`}>{pt.toUpperCase()}</span>)}
           {hasChannelData && <span className="bstatus s-active">active</span>}
         </div>
+        <button className="ibtn" onClick={onAccounts}>Accounts</button>
       </div>
       <div className="page">
         {!hasChannelData && (
@@ -656,7 +658,7 @@ function BrandView({ brandId, onBack, brands }) {
               <div key={c.channel?.id || c.platform?.handle} style={{display:"flex",alignItems:"center",gap:6,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:4,padding:"6px 10px"}}>
                 <Pfp srcs={getChannelThumbs(c)} size={18} name={c.platform?.displayName || c.platform?.handle}/>
                 <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text2)"}}>{c.platform?.displayName || c.platform?.handle}</span>
-                <span style={{fontFamily:"DM Mono",fontSize:8,color:"#444"}}>{fmt(c.platform?.followers || 0)} followers</span>
+                <span style={{fontFamily:"DM Mono",fontSize:8,color:"#444"}}>{fmt(getFollowers(c))} followers</span>
               </div>
             ))}
           </div>
@@ -694,7 +696,7 @@ function BrandView({ brandId, onBack, brands }) {
                         <span style={{fontSize:10,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{showName}</span>
                         <span style={{fontSize:7,padding:"1px 4px",borderRadius:2,flexShrink:0,background:isActive?"var(--green-dim)":"var(--red-dim)",color:isActive?"var(--green)":"var(--red)"}}>{isActive?"active":"inactive"}</span>
                       </div>
-                      <div style={{fontFamily:"DM Mono",fontSize:8,color:"#555"}}>{c ? fmt(c.platform?.followers || 0) + " followers" : "not synced"}</div>
+                      <div style={{fontFamily:"DM Mono",fontSize:8,color:"#555"}}>{c ? fmt(getFollowers(c)) + " followers" : "not synced"}</div>
                     </div>
                   </div>
                 );
@@ -753,7 +755,7 @@ function BrandView({ brandId, onBack, brands }) {
   );
 }
 
-function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBrand, removeHandleFromBrand, removeChannel, toggleActive }) {
+function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBrand, removeHandleFromBrand, removeChannel, toggleActive, onBack }) {
   const [modal, setModal] = useState(null);
   const [syncHandle, setSyncHandle] = useState("");
   const [syncPlatform, setSyncPlatform] = useState("youtube");
@@ -761,6 +763,7 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
   const [syncError, setSyncError] = useState(null);
   const [syncBrandId, setSyncBrandId] = useState(null);
   const [newBrandName, setNewBrandName] = useState("");
+  const [resyncKey, setResyncKey] = useState(null);
   const { apiKey, instagramConfigured, fetchChannel, channelData } = useYouTubeContext();
 
   const handleSync = async (targetBrandId) => {
@@ -785,7 +788,10 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
   return (
     <div>
       <div className="topbar">
-        <span className="topbar-title">ACCOUNT MANAGER</span>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <button className="ibtn" onClick={onBack}>← BACK</button>
+          <span className="topbar-title">ACCOUNT MANAGER</span>
+        </div>
         <div className="tr" style={{gap:8}}>
           <button className="ibtn primary" onClick={() => setModal("brand")}>+ ADD BRAND</button>
           <button className="ibtn primary" onClick={() => setModal("account")}>+ ADD ACCOUNT</button>
@@ -795,6 +801,12 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
         <div style={{marginBottom:24}}>
           <div className="stitle">CONNECTED ACCOUNTS</div>
           <div className="sdesc">Add brands first, then add YouTube or TikTok accounts via + ADD ACCOUNT.</div>
+          {syncError && (
+            <div className="alert" style={{marginBottom:12}}>
+              <span className="alert-txt">{syncError}</span>
+              <button className="ibtn" onClick={() => setSyncError(null)}>✕</button>
+            </div>
+          )}
           {brandsLoading ? (
             <div style={{padding:20,textAlign:"center",color:"var(--text3)",fontSize:12,border:"1px dashed var(--border2)",borderRadius:4}}>Loading brands…</div>
           ) : brands.length === 0 ? (
@@ -821,12 +833,26 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                         <div className="atag">{!isActive ? `${pt} · deactivated` : d ? pt : "not synced"}</div>
                       </div>
                       <div className="ameta">
-                        <span>{d ? (d.platform?.followers ? fmt(d.platform.followers) + " followers" : "—") : "—"}</span><br/>
+                        <span>{d ? (getFollowers(d) ? fmt(getFollowers(d)) + " followers" : "—") : "—"}</span><br/>
                         <span className={`chip ${isActive ? (d ? "cg" : "ctt") : "cr"}`}>{isActive ? (d ? "ACTIVE" : "SYNC NEEDED") : "INACTIVE"}</span>
                       </div>
                       <div className="aacts">
                         <button className="ibtn" title={isActive ? "Deactivate" : "Activate"} onClick={() => toggleActive(b.id, key, !isActive)} style={!isActive ? {color:"var(--green)",borderColor:"rgba(0,184,148,.3)"} : {}}>{isActive ? "⏸" : "▶"}</button>
-                        {isActive && <button className="ibtn" title="Re-sync" onClick={async () => { setSyncLoading(true); setSyncError(null); try { await fetchChannel(apiHandle, rawPlat, true); } catch (e) { setSyncError(e.message); } setSyncLoading(false); }}>⟳</button>}
+                        {isActive && (
+                          <button className="ibtn" title="Re-sync" disabled={resyncKey === key}
+                            onClick={async () => {
+                              setResyncKey(key); setSyncError(null);
+                              try {
+                                await fetchChannel(rawHandle, rawPlat, true);
+                              } catch (e) {
+                                setSyncError(e.message || String(e));
+                              } finally {
+                                setResyncKey(null);
+                              }
+                            }}>
+                            {resyncKey === key ? "…" : "⟳"}
+                          </button>
+                        )}
                         <button className="ibtn danger" onClick={async () => { removeChannel(key); await removeHandleFromBrand(b.id, rawHandle, rawPlat); }}>✕</button>
                       </div>
                     </div>
@@ -940,9 +966,17 @@ export default function App() {
     setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, key])], handleStatus: { ...b.handleStatus, [key]: true } } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, []);
 
+  // When Supabase is configured, DB is source of truth for which brands have which channels.
+  // Only fetch Instagram data for handles already in brands – don't auto-add from .env.
   const igAutoAdded = useRef(false);
   useEffect(() => {
     if (brandsLoading || igAutoAdded.current || !brands.length) return;
+    if (isSupabaseConfigured()) {
+      igAutoAdded.current = true;
+      const igKeys = brands.flatMap(b => b.handles).filter(k => (pk(k).platform || "youtube") === "instagram");
+      igKeys.forEach(key => { const { handle, platform } = pk(key); fetchChannel(handle, platform).catch(() => {}); });
+      return;
+    }
     const igHandles = getInstagramHandles();
     if (!igHandles.length) return;
     igAutoAdded.current = true;
@@ -1096,10 +1130,10 @@ export default function App() {
           </div>
           <div className="nav-sec">
             <div className={`nav-item${page==="overview"?" act":""}`} onClick={() => go("overview")}>
-              <div className="nav-dot" style={{background:"#d63031"}}/>Overview
+              <div className="nav-dot" style={{background:"#d63031"}}/>Social Media
             </div>
-            <div className={`nav-item${page==="settings"?" act":""}`} onClick={() => go("settings")}>
-              <div className="nav-dot" style={{background:"#d63031"}}/>Accounts
+            <div className={`nav-item${page==="matchmax"?" act":""}`} onClick={() => go("matchmax")}>
+              <div className="nav-dot" style={{background:"#d63031"}}/>MatchMax App
             </div>
           </div>
           <div className="nav-sec">
@@ -1123,9 +1157,18 @@ export default function App() {
           </div>
         </div>
         <div className="main" onMouseDown={e => { const el = document.activeElement, t = e.target; if ((el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") && !t.closest("input,textarea,select,button")) el.blur(); }}>
-          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors}/>}
-          {page === "brand" && <BrandView brandId={brandId} onBack={() => go("overview")} brands={brands}/>}
-          {page === "settings" && <Settings brands={brands} brandsLoading={brandsLoading} addBrand={addBrand} removeBrand={id => removeBrand(id, removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel} toggleActive={toggleActive}/>}
+          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")}/>}
+          {page === "matchmax" && (
+            <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+              <div className="topbar">
+                <span className="topbar-title">MATCHMAX APP ANALYTICS</span>
+                <button className="ibtn" onClick={() => go("settings")}>Accounts</button>
+              </div>
+              <div className="page" style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:16}}>Coming soon</div>
+            </div>
+          )}
+          {page === "brand" && <BrandView brandId={brandId} onBack={() => go("overview")} brands={brands} onAccounts={() => go("settings")}/>}
+          {page === "settings" && <Settings brands={brands} brandsLoading={brandsLoading} addBrand={addBrand} removeBrand={id => removeBrand(id, removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel} toggleActive={toggleActive} onBack={() => go("overview")}/>}
         </div>
       </div>
     </>
