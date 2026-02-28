@@ -175,6 +175,62 @@ const css = `
   .bgrid { grid-template-columns: 1fr; }
   .pgrid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Mobile-only: apply only below 768px, desktop unchanged */
+@media (max-width: 768px) {
+  .mobile-menu-btn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--border2); border-radius: 4px; background: var(--surface2); color: var(--text); font-size: 18px; cursor: pointer; flex-shrink: 0; }
+  .mobile-topbar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); min-height: 48px; }
+  .mobile-topbar-brand { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow: hidden; }
+  .mobile-topbar-logo { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+  .mobile-topbar-text { font-family: var(--display); font-size: 11px; letter-spacing: 1px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; }
+  .mobile-topbar-title { font-family: var(--display); font-size: 12px; letter-spacing: 1px; color: var(--text); flex-shrink: 0; text-align: right; }
+  .top-posts-panel { flex: 0 0 auto !important; max-height: 200px; }
+  .top-posts-list { max-height: 140px !important; }
+  .top-post-row { padding: 4px 6px !important; }
+  .sidebar-overlay { display: block; }
+  .sidebar { position: fixed; top: 0; left: 0; z-index: 1000; height: 100vh; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,.5); }
+  .sidebar.mobile-open { transform: translateX(0); }
+  .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+  .sidebar-overlay.visible { opacity: 1; pointer-events: auto; }
+  .main { padding-top: 0; }
+  .page { padding: 12px 16px; }
+  .topbar { padding: 0 16px; min-height: 44px; flex-wrap: wrap; gap: 8px; }
+  .topbar-title { font-size: 14px; letter-spacing: 1px; }
+  .krow { grid-template-columns: 1fr 1fr !important; gap: 1px; margin-bottom: 10px; }
+  .kcard { padding: 12px 14px; }
+  .klbl { font-size: 9px; margin-bottom: 4px; }
+  .kval { font-size: 32px; }
+  .ksub { font-size: 9px; }
+  .g3 { grid-template-columns: 1fr; height: auto; min-height: 0; margin-bottom: 12px; }
+  .g3 > .panel:not(.top-posts-panel) { min-height: 180px; }
+  .panel { padding: 12px 14px; }
+  .ptitle { font-size: 12px; }
+  .bgrid { grid-template-columns: 1fr; }
+  .bcard { padding: 12px 14px; }
+  .bcard-top { flex-wrap: wrap; gap: 8px; }
+  .bcard-name { font-size: 14px; }
+  .bcard-platforms > div { flex: 1 1 min(100%, 140px) !important; min-width: 0; }
+  .pgrid { grid-template-columns: 1fr; }
+  .pcard .pthumb { height: 80px; font-size: 22px; }
+  .pbody { padding: 8px 10px; }
+  .pcap { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pvbig { font-size: 15px; }
+  .arow { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .ameta { text-align: left; }
+  .tr { flex-wrap: wrap; }
+  .ibtn { font-size: 9px; padding: 6px 10px; }
+  .g2 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .krow[style*="repeat(5")] { grid-template-columns: 1fr 1fr !important; }
+  .modal { width: calc(100vw - 32px); max-width: 400px; margin: 16px; padding: 20px; }
+  .ptabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; padding-bottom: 4px; }
+  .ptab { font-size: 10px; padding: 8px 14px; white-space: nowrap; }
+  .alert-txt { font-size: 11px; }
+}
+@media (min-width: 769px) {
+  .mobile-menu-btn { display: none; }
+  .mobile-topbar { display: none; }
+  .sidebar-overlay { display: none; }
+}
 `;
 
 const fmt = n => {
@@ -471,14 +527,14 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
             </ResponsiveContainer>
             </div>
           </div>
-          <div className="panel" style={{display:"flex",flexDirection:"column"}}>
+          <div className="panel top-posts-panel" style={{display:"flex",flexDirection:"column"}}>
             <div className="ptitle" style={{marginBottom:6,flexShrink:0}}>TOP POSTS</div>
-            <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:4,minHeight:0}}>
+            <div className="top-posts-list" style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:4,minHeight:0}}>
               {(() => {
                 const ranked = [...allPosts].sort((a,b) => b.views - a.views);
                 if (!ranked.length) return <div style={{fontSize:10,color:"var(--text3)",padding:"8px 0"}}>Sync an account to see top posts</div>;
                 return ranked.map((p,i) => (
-                  <div key={p.id} style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:3,padding:"6px 8px",borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":p.plat==="ig"?"#E1306C":"var(--red)"}`,flexShrink:0}}>
+                  <div key={p.id} className="top-post-row" style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:3,padding:"6px 8px",borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":p.plat==="ig"?"#E1306C":"var(--red)"}`,flexShrink:0}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:5}}>
                       <span style={{fontFamily:"var(--display)",fontSize:13,color:"var(--text3)",minWidth:14}}>#{i+1}</span>
                       <div style={{flex:1,minWidth:0}}>
@@ -545,7 +601,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
                   </div>
                 </div>
                 {cols.length > 0 && (
-                <div style={{display:"flex",justifyContent:"center",flexWrap:"wrap",gap:8,marginTop:8}}>
+                <div className="bcard-platforms" style={{display:"flex",justifyContent:"center",flexWrap:"wrap",gap:8,marginTop:8}}>
                   {cols.map(({ pt, name }) => {
                     const ptHandles = allHandles.filter(h => (h.includes("::") ? h.split("::")[1] : "youtube") === pt);
                     const ptChData = ptHandles.map(h => channelData[h]).filter(Boolean);
@@ -933,7 +989,14 @@ export default function App() {
 
   const page = nav.page;
   const brandId = nav.brandId;
-  const go = (p, id = null) => { const next = { page: p, brandId: id ?? (p === "brand" ? brandId : null) }; setNav(next); saveNav(next.page, next.brandId); };
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const go = (p, id = null) => {
+    const next = { page: p, brandId: id ?? (p === "brand" ? brandId : null) };
+    setNav(next);
+    saveNav(next.page, next.brandId);
+    setSidebarOpen(false);
+  };
+  const pageTitle = page === "overview" ? "Social Media" : page === "matchmax" ? "MatchMax App" : page === "settings" ? "Accounts" : brands.find(b => b.id === brandId)?.name || "Brand";
 
   const getBrandNameForChannel = (ch) => {
     const name = ch?.platform?.displayName || ch?.channel?.title || ch?.platform?.handle;
@@ -1123,7 +1186,7 @@ export default function App() {
     <>
       <style>{FONTS}{css}</style>
       <div className="app">
-        <div className="sidebar">
+        <div className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
           <div className="logo-area">
             <img src="/tm-logo-icon.jpg" alt="Tambareni Media" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
             <div className="logo-text">TAMBARENI<br/>MEDIA<br/>ANALYTICS</div>
@@ -1156,7 +1219,16 @@ export default function App() {
             </div>
           </div>
         </div>
+        <div className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
         <div className="main" onMouseDown={e => { const el = document.activeElement, t = e.target; if ((el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") && !t.closest("input,textarea,select,button")) el.blur(); }}>
+          <div className="mobile-topbar">
+            <button type="button" className="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">☰</button>
+            <div className="mobile-topbar-brand">
+              <img src="/tm-logo-icon.jpg" alt="" className="mobile-topbar-logo"/>
+              <span className="mobile-topbar-text">TAMBARENI MEDIA ANALYTICS</span>
+            </div>
+            <span className="mobile-topbar-title">{pageTitle}</span>
+          </div>
           {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")}/>}
           {page === "matchmax" && (
             <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
