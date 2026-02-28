@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 110 110" width="32" height="32">
+  <!-- Zoomed in 10%: viewBox shows 90% of content area for tighter fit -->
+  <rect width="100" height="100" x="0" y="0" fill="#080808"/>
+  <!-- Geometric TM: T horizontal bar -->
+  <path fill="none" stroke="#f5f2ed" stroke-width="8" stroke-linecap="square"
+    d="M 12 18 L 88 18 M 50 18 L 50 82"/>
+  <!-- M: two outer verticals + V center -->
+  <path fill="none" stroke="#f5f2ed" stroke-width="8" stroke-linecap="square"
+    d="M 12 18 L 12 82 M 88 18 L 88 82 M 12 82 L 50 45 L 88 82"/>
+</svg>

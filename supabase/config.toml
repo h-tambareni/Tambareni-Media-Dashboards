@@ -1,0 +1,8 @@
+# Supabase project config
+# scrapecreators-proxy: allow publishable key (sb_publishable_xxx)
+[functions.scrapecreators-proxy]
+verify_jwt = false
+
+# daily-sync: invoked by external cron at 11:59 PM – uses CRON_SECRET for auth
+[functions.daily-sync]
+verify_jwt = false

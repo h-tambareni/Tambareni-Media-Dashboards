@@ -8,6 +8,14 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      window.addEventListener('error', function(e) {
+        document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Error</h2><pre>' + (e.message || e) + '</pre></div>';
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Promise Error</h2><pre>' + (e.reason?.message || e.reason) + '</pre></div>';
+      });
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

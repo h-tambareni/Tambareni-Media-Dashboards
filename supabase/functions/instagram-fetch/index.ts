@@ -97,14 +97,16 @@ Deno.serve(async (req) => {
         m.media_type === "VIDEO" || m.media_type === "REELS"
           ? "views,likes,comments"
           : "likes,comments";
-      const insRes = await fetch(
-        `${IG_API}/${m.id}/insights?metric=${metrics}&access_token=${token}`
-      );
-      const insData = await insRes.json();
-      const byName: Record<string, number> = {};
-      (insData.data || []).forEach((d: { name: string; values: { value: string }[] }) => {
-        byName[d.name] = parseInt(d.values?.[0]?.value || "0", 10);
-      });
+      let byName: Record<string, number> = {};
+      try {
+        const insRes = await fetch(
+          `${IG_API}/${m.id}/insights?metric=${metrics}&access_token=${token}`
+        );
+        const insData = await insRes.json();
+        (insData.data || []).forEach((d: { name: string; values: { value: string }[] }) => {
+          byName[d.name] = parseInt(d.values?.[0]?.value || "0", 10);
+        });
+      } catch {}
       posts.push({
         id: m.id,
         cap: (m.caption || "").slice(0, 100) || "(Untitled)",

@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { isSupabaseConfigured } from "./lib/supabase";
-import tmLogo from "../assets/tm-logo-icon.jpg";
 import {
   fetchBrandsWithChannels,
   createBrand as dbCreateBrand,
@@ -10,9 +9,10 @@ import {
   addChannelToBrand as dbAddChannelToBrand,
   removeChannelFromBrand as dbRemoveChannelFromBrand,
   toggleChannelActive as dbToggleChannelActive,
+  fetchLastSyncTime,
   ck, pk,
 } from "./lib/supabaseDb";
-import { getInstagramAuthUrl } from "./lib/instagramApi";
+import { hasInstagramTokens, getInstagramHandles } from "./lib/instagramApi";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
 
@@ -20,7 +20,7 @@ const css = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
 .app, .app * { cursor: default; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; }
 .app input, .app textarea, .app select { cursor: text; user-select: text; -webkit-user-select: text; -moz-user-select: text; -ms-user-select: text; }
-.app button, .app .nav-item, .app .brand-item, .app .ibtn, .app .tbtn, .app .bcard, .app .pcard, .app .ptab, .app .addbtn, .app .pact { cursor: pointer; }
+.app button, .app .nav-item, .app .brand-item, .app .ibtn, .app .tbtn, .app .bcard, .app .pcard, .app .ptab, .app .addbtn, .app .pact, .app a.ibtn { cursor: pointer; }
 :root {
   --bg: #080808; --surface: #111111; --surface2: #181818;
   --border: #1e1e1e; --border2: #2e2e2e;
@@ -46,7 +46,7 @@ const css = `
 .b-avatar { width:22px; height:22px; border-radius:3px; display:flex; align-items:center; justify-content:center; font-family:var(--display); font-size:11px; flex-shrink:0; }
 .rbadge { background:var(--red); color:white; font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px; margin-left:auto; }
 .dbadge { background:#1a1a1a; color:var(--text3); font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px; margin-left:auto; }
-.main { flex:1; overflow-x:hidden; min-width:0; }
+.main { flex:1; overflow-x:hidden; overflow-y:auto; min-width:0; height:100vh; }
 .topbar { height:48px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:var(--surface); position:sticky; top:0; z-index:10; }
 .topbar-title { font-family:var(--display); font-size:20px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
 .tr { display:flex; align-items:center; gap:10px; }
@@ -69,8 +69,8 @@ const css = `
 .ksub { font-family:var(--mono); font-size:10px; color:var(--text2); margin-top:3px; }
 .kchg { font-family:var(--mono); font-size:9px; margin-top:3px; }
 .up { color:var(--green); } .dn { color:var(--red); }
-.g3 { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:12px; min-height:272px; flex:1; }
-.panel { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:14px 16px; overflow:hidden; }
+.g3 { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:12px; height:340px; flex-shrink:0; }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:14px 16px; overflow:hidden; min-height:0; }
 .ph { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
 .ptitle { font-family:var(--display); font-size:14px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
 .pact { font-family:var(--mono); font-size:9px; color:var(--text3); cursor:pointer; }
@@ -133,6 +133,7 @@ const css = `
 .ctt { background:rgba(255,255,255,.07); color:#888; }
 .cg { background:var(--green-dim); color:var(--green); }
 .cr { background:var(--red-dim); color:var(--red); }
+.cig-insta { background:rgba(225,48,108,.2); color:#E1306C; }
 .hdot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
 .hg { background:var(--green); box-shadow:0 0 5px var(--green); }
 .hr { background:var(--red); box-shadow:0 0 5px var(--red); }
@@ -144,6 +145,36 @@ const css = `
 .sh { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 .sht { font-family:var(--display); font-size:18px; letter-spacing:1px; color:var(--text); cursor:default; user-select:none; }
 .ct { font-family:var(--mono); font-size:8px; }
+
+@media (max-height: 800px) {
+  .kval { font-size: 42px; }
+  .kcard { padding: 10px 14px; }
+  .klbl { font-size: 9px; margin-bottom: 3px; }
+  .ksub { font-size: 8px; }
+  .g3 { height: 280px; gap: 8px; margin-bottom: 8px; }
+  .krow { margin-bottom: 8px; }
+  .page { padding: 10px 16px; }
+  .topbar { height: 40px; }
+}
+
+@media (max-height: 660px) {
+  .kval { font-size: 32px; }
+  .kcard { padding: 8px 10px; }
+  .g3 { height: 220px; }
+}
+
+@media (max-width: 1200px) {
+  .kval { font-size: 48px; }
+  .bgrid { grid-template-columns: repeat(2, 1fr); }
+  .pgrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 900px) {
+  .kval { font-size: 36px; }
+  .g3 { grid-template-columns: 1fr; height: auto; min-height: auto; }
+  .bgrid { grid-template-columns: 1fr; }
+  .pgrid { grid-template-columns: repeat(2, 1fr); }
+}
 `;
 
 const fmt = n => {
@@ -188,7 +219,7 @@ function Pfp({ src, srcs, size = 28, fallback, name }) {
   return (
     <div style={{ width: size, height: size, flexShrink: 0 }}>
       {activeSrc ? (
-        <img src={activeSrc} alt="" style={s} onError={() => setFailed(prev => new Set(prev).add(allSrcs.indexOf(activeSrc)))}/>
+        <img src={activeSrc} alt="" style={s} referrerPolicy="no-referrer" onError={() => setFailed(prev => new Set(prev).add(allSrcs.indexOf(activeSrc)))}/>
       ) : (
         <div style={{ display: "flex", width: size, height: size, borderRadius: 4, alignItems: "center", justifyContent: "center", fontFamily: "var(--display)", fontSize: Math.max(9, size * 0.45), letterSpacing: 1, color: "#fff", background: grad }}>{fb}</div>
       )}
@@ -196,24 +227,100 @@ function Pfp({ src, srcs, size = 28, fallback, name }) {
   );
 }
 
+const digitSpinKeyframes = `@keyframes digitRoll{0%{transform:translateY(0)}100%{transform:translateY(-10em)}}`;
+function DigitSlot({ digit, spinning, delay }) {
+  const d = Math.min(9, Math.max(0, digit));
+  return (
+    <span style={{ display: "inline-block", overflow: "hidden", height: "1em", lineHeight: 1, verticalAlign: "bottom" }}>
+      <span
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          transform: spinning ? undefined : `translateY(-${d}em)`,
+          animation: spinning ? `digitRoll 0.08s linear infinite` : "none",
+          animationDelay: delay ? `${delay}ms` : undefined,
+        }}
+      >
+        {[0,1,2,3,4,5,6,7,8,9].map(n => <span key={n} style={{ height: "1em", display: "block", textAlign: "center" }}>{n}</span>)}
+      </span>
+    </span>
+  );
+}
+function RollingNumber({ value, spinning, format = "full", magnitude }) {
+  const num = Math.round(Number(value) || 0);
+  const targetStr = format === "short" ? fmt(num) : fmtNum(num);
+  const [displayNum, setDisplayNum] = useState(0);
+  const rafRef = useRef();
+  useEffect(() => {
+    if (spinning) {
+      const mag = magnitude ?? Math.pow(10, Math.max(0, Math.floor(Math.log10(num + 1))));
+      const id = setInterval(() => setDisplayNum(Math.floor(Math.random() * mag)), 80);
+      return () => clearInterval(id);
+    }
+  }, [spinning, magnitude, num]);
+  useEffect(() => {
+    if (spinning) return;
+    const start = 0;
+    const end = num;
+    const duration = 600;
+    const startTime = performance.now();
+    const tick = (t) => {
+      const elapsed = t - startTime;
+      const p = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - p, 2);
+      setDisplayNum(Math.round(start + (end - start) * eased));
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [spinning, num]);
+  const displayStr = format === "short" ? fmt(displayNum) : fmtNum(displayNum);
+  if (spinning) {
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", fontVariantNumeric: "tabular-nums" }}>
+        <style>{digitSpinKeyframes}</style>
+        {displayStr.split("").map((c, i) => {
+          const d = parseInt(c, 10);
+          if (c === "," || c === "." || isNaN(d)) return <span key={i}>{c}</span>;
+          return <DigitSlot key={i} digit={d} spinning delay={i * 15} />;
+        })}
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", fontVariantNumeric: "tabular-nums" }}>
+      <style>{digitSpinKeyframes}</style>
+      {displayStr.split("").map((c, i) => {
+        const d = parseInt(c, 10);
+        if (c === "," || c === "." || isNaN(d)) return <span key={i}>{c}</span>;
+        return <DigitSlot key={i} digit={d} spinning={false} />;
+      })}
+    </span>
+  );
+}
+
+function getChannelThumbs(d) {
+  const urls = [];
+  const seen = new Set();
+  [d?.platform?.thumbnail, d?.channel?.thumbnail].forEach(t => { if (t && !seen.has(t)) { urls.push(t); seen.add(t); } });
+  (d?.posts || []).slice(0, 2).forEach(p => { if (p?.thumbnail && !seen.has(p.thumbnail)) { urls.push(p.thumbnail); seen.add(p.thumbnail); } });
+  return urls;
+}
 function getAllBrandThumbs(brand, channelData) {
   const urls = [];
   const tried = new Set();
   for (const key of (brand.handles || [])) {
-    const d = channelData[key];
-    if (!d) continue;
-    const t1 = d.platform?.thumbnail, t2 = d.channel?.thumbnail;
-    if (t1 && !tried.has(t1)) { urls.push(t1); tried.add(t1); }
-    if (t2 && !tried.has(t2)) { urls.push(t2); tried.add(t2); }
+    getChannelThumbs(channelData[key] || {}).forEach(u => { if (u && !tried.has(u)) { urls.push(u); tried.add(u); } });
   }
   return urls;
 }
 
-function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncErrors }) {
-  const [time, setTime] = useState("ALL TIME");
+function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, lastSync, syncErrors }) {
   const { channelData } = useYouTubeContext();
 
   const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles))];
+  const allChannelsLoaded = uniqueKeys.length === 0 || uniqueKeys.every(k => channelData[k]);
+  const dataReady = !brandsLoading && allChannelsLoaded;
   const keyToBrand = {};
   (brandsFromDb || []).forEach(b => {
     b.handles.forEach(h => {
@@ -230,7 +337,16 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
         byDate[key].cumViews += (row.views || 0);
       });
     });
-    const sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+    let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+    if (sorted.length === 1) {
+      const d = sorted[0].raw || "";
+      const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
+      prev.setDate(prev.getDate() - 1);
+      const prevStr = prev.toISOString().slice(0, 10);
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const prevD = `${months[prev.getMonth()]} ${prev.getDate()}`;
+      sorted = [{ d: prevD, raw: prevStr, cumViews: 0 }, ...sorted];
+    }
     return sorted.map((row, i) => ({
       ...row,
       views: i === 0 ? 0 : Math.max(0, row.cumViews - (sorted[i - 1].cumViews || 0)),
@@ -257,35 +373,41 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
   const totalShares = allPosts.reduce((s, p) => s + (p.shares || 0), 0);
   const engagementRate = totalViews > 0 ? ((totalLikes + totalComments + totalShares) / totalViews * 100).toFixed(2) : "0";
 
-  let ytViews = 0, ttViews = 0;
+  let ytViews = 0, ttViews = 0, igViews = 0;
   allChannels.forEach(ch => {
     const pt = ch.platform?.platformType || ch.channel?.platform || "youtube";
-    if (pt === "tiktok") ttViews += (ch.totalViews || 0);
-    else ytViews += (ch.totalViews || 0);
+    const v = ch.totalViews || 0;
+    if (pt === "tiktok") ttViews += v;
+    else if (pt === "instagram") igViews += v;
+    else ytViews += v;
   });
   const pieData = [];
   if (ytViews > 0) pieData.push({ name: "YT", value: ytViews, color: "#ff6b6b" });
   if (ttViews > 0) pieData.push({ name: "TT", value: ttViews, color: "#69c9d0" });
+  if (igViews > 0) pieData.push({ name: "IG", value: igViews, color: "#E1306C" });
   if (!pieData.length) pieData.push({ name: "—", value: 1, color: "#333" });
 
   return (
-    <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
       <div className="topbar">
         <span className="topbar-title">OVERVIEW</span>
         <div className="tr">
-          <div className="tpill">{["7D","30D","90D","ALL TIME"].map(t=><button key={t} className={`tbtn${time===t?" act":""}`} onClick={()=>setTime(t)}>{t}</button>)}</div>
           <button className="ibtn primary" disabled={syncing} onClick={syncAll}>{syncing ? "SYNCING…" : "⟳ SYNC ALL"}</button>
         </div>
       </div>
-      <div className="page" style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+      <div className="page" style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
           {[
-            {l:"Total Views",v:fmtNum(totalViews),s:"All platforms"},
-            {l:"Followers",v:fmtNum(totalFollowers),s:"All accounts"},
-            {l:"Avg Views/Post",v:avgViews?fmtNum(avgViews):"—",s:`${allPosts.length} posts`},
-            {l:"Engagement Rate",v:engagementRate+"%",s:"(Likes+cmts+shares)/views"},
+            {l:"Total Views",v:totalViews,s:"All platforms",mag:1e7},
+            {l:"Followers",v:totalFollowers,s:"All accounts",mag:1e4},
+            {l:"Avg Views/Post",v:avgViews,s:`${allPosts.length} posts`,mag:1e6},
+            {l:"Engagement Rate",v:parseFloat(engagementRate)||0,s:"(Likes+cmts+shares)/views",suffix:"%",decimal:true},
           ].map(k=>(
-            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div><div className="ksub">{k.s}</div></div>
+            <div key={k.l} className="kcard">
+              <div className="klbl">{k.l}</div>
+              <div className="kval">{k.decimal ? (dataReady ? <>{k.v.toFixed(2)}%</> : <><RollingNumber value={Math.floor(k.v)} spinning magnitude={10} format="short" />%</>) : <><RollingNumber value={k.v} spinning={!dataReady} magnitude={k.mag} format={k.suffix?"short":"full"} />{k.suffix||""}</>}</div>
+              <div className="ksub">{k.s}</div>
+            </div>
           ))}
         </div>
         {syncErrors?.length > 0 && (
@@ -295,19 +417,20 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
         )}
         <div className="krow" style={{gridTemplateColumns:"repeat(3,1fr)",marginTop:-4}}>
           {[
-            {l:"Total Likes",v:fmtNum(totalLikes),s:"❤️ All content"},
-            {l:"Comments",v:fmtNum(totalComments),s:"💬 All content"},
-            {l:"Shares",v:fmtNum(totalShares),s:"↗️ All content"},
+            {l:"Total Likes",v:totalLikes,s:"❤️ All content"},
+            {l:"Comments",v:totalComments,s:"💬 All content"},
+            {l:"Shares",v:totalShares,s:"↗️ All content"},
           ].map(k=>(
-            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div><div className="ksub">{k.s}</div></div>
+            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval"><RollingNumber value={k.v} spinning={!dataReady} magnitude={1e6} /></div><div className="ksub">{k.s}</div></div>
           ))}
         </div>
 
-        <div className="g3">
-          <div className="panel">
-            <div className="ph"><span className="ptitle">DAILY GROWTH</span></div>
+        <div className="g3" style={{visibility: dataReady ? "visible" : "hidden", opacity: dataReady ? 1 : 0, transition: "opacity 0.4s"}}>
+          <div className="panel" style={{display:"flex",flexDirection:"column"}}>
+            <div className="ph" style={{flexShrink:0}}><span className="ptitle">DAILY GROWTH</span></div>
             {viewsData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={238}>
+              <div style={{flex:1,minHeight:0}}>
+              <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={viewsData} margin={{top:0,right:0,bottom:0,left:-22}}>
                   <defs>
                     <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
@@ -321,15 +444,17 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
                   <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv)" name="Daily growth" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
                 </AreaChart>
               </ResponsiveContainer>
+              </div>
             ) : (
-              <div style={{height:238,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Daily growth builds as you sync. Need 2+ days of data.</div>
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Daily growth builds as you sync. Need 2+ days of data.</div>
             )}
           </div>
           <div className="panel" style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
-            <div className="ptitle" style={{alignSelf:"stretch",marginBottom:4}}>PLATFORM SPLIT</div>
-            <ResponsiveContainer width="100%" height={238}>
+            <div className="ptitle" style={{alignSelf:"stretch",marginBottom:4,flexShrink:0}}>PLATFORM SPLIT</div>
+            <div style={{flex:1,minHeight:0,width:"100%"}}>
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius={68} outerRadius={94} strokeWidth={0}
+                <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius="58%" outerRadius="80%" strokeWidth={0}
                   label={({name,percent,cx,cy,midAngle,innerRadius,outerRadius})=>{
                     const R=Math.PI/180; const r=(innerRadius+outerRadius)/2+12;
                     const x=cx+r*Math.cos(-midAngle*R), y=cy+r*Math.sin(-midAngle*R);
@@ -340,6 +465,7 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
                 </Pie>
               </PieChart>
             </ResponsiveContainer>
+            </div>
           </div>
           <div className="panel" style={{display:"flex",flexDirection:"column"}}>
             <div className="ptitle" style={{marginBottom:6,flexShrink:0}}>TOP POSTS</div>
@@ -364,12 +490,12 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
           </div>
         </div>
 
-        <div className="sh" style={{marginBottom:6,flexShrink:0}}>
+        <div className="sh" style={{marginBottom:6,flexShrink:0,visibility: dataReady ? "visible" : "hidden", opacity: dataReady ? 1 : 0, transition: "opacity 0.4s"}}>
           <span className="sht">BRANDS</span>
           <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text3)"}}>{(brandsFromDb||[]).length} brands</span>
         </div>
 
-        <div className="bgrid" style={{flex:1,minHeight:0,overflowY:"auto",alignContent:"start"}}>
+        <div className="bgrid" style={{flex:1,minHeight:0,overflowY:"auto",alignContent:"start",visibility: dataReady ? "visible" : "hidden", opacity: dataReady ? 1 : 0, transition: "opacity 0.4s"}}>
           {!(brandsFromDb||[]).length ? (
             <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--text3)",border:"1px dashed var(--border2)",borderRadius:5}}>
               <div style={{fontSize:14,marginBottom:8}}>No brands yet</div>
@@ -410,11 +536,11 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
                           <div style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--text3)",marginBottom:6}}>TOTAL</div>
                           <div style={{display:"flex",width:"100%",alignItems:"baseline"}}>
                             <div style={{flex:1,textAlign:"center",paddingRight:8,borderRight:"1px solid var(--border2)"}}>
-                              <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{fmtNum(brandFollowers)}</div>
+                              <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandFollowers} spinning={!dataReady} magnitude={1e4} /></div>
                               <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
                             </div>
                             <div style={{flex:1,textAlign:"center",paddingLeft:8}}>
-                              <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{fmtNum(brandViews)}</div>
+                              <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandViews} spinning={!dataReady} magnitude={1e6} /></div>
                               <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
                             </div>
                           </div>
@@ -438,11 +564,11 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
                         </div>
                         <div style={{display:"flex",width:"100%",alignItems:"baseline"}}>
                           <div style={{flex:1,textAlign:"center",paddingRight:8,borderRight:"1px solid var(--border2)"}}>
-                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? fmtNum(followers) : "—"}</div>
+                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={followers} spinning={!dataReady} magnitude={1e4} /> : "—"}</div>
                             <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
                           </div>
                           <div style={{flex:1,textAlign:"center",paddingLeft:8}}>
-                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? fmtNum(views) : "—"}</div>
+                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={views} spinning={!dataReady} magnitude={1e6} /> : "—"}</div>
                             <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
                           </div>
                         </div>
@@ -463,7 +589,6 @@ function Overview({ onBrand, brandsFromDb, syncAll, syncing, lastSync, syncError
 function BrandView({ brandId, onBack, brands }) {
   const { channelData } = useYouTubeContext();
   const dbBrand = brands?.find(b => b.id === brandId);
-  const [time, setTime] = useState("ALL TIME");
   if (!dbBrand) return null;
 
   const allHandles = dbBrand.handles;
@@ -506,11 +631,8 @@ function BrandView({ brandId, onBack, brands }) {
           <button className="ibtn" onClick={onBack}>← BACK</button>
           <Pfp srcs={thumbs} size={24} name={dbBrand.name}/>
           <span className="topbar-title">{dbBrand.name}</span>
-          {platforms.map(pt => <span key={pt} className={`chip ${pt==="tiktok"?"ctt":"cyt"}`}>{pt.toUpperCase()}</span>)}
+          {platforms.map(pt => <span key={pt} className={`chip ${pt==="tiktok"?"ctt":pt==="instagram"?"cig-insta":"cyt"}`}>{pt.toUpperCase()}</span>)}
           {hasChannelData && <span className="bstatus s-active">active</span>}
-        </div>
-        <div className="tr">
-          <div className="tpill">{["7D","30D","90D","ALL TIME"].map(t=><button key={t} className={`tbtn${time===t?" act":""}`} onClick={()=>setTime(t)}>{t}</button>)}</div>
         </div>
       </div>
       <div className="page">
@@ -532,7 +654,7 @@ function BrandView({ brandId, onBack, brands }) {
           <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
             {chData.map(c => (
               <div key={c.channel?.id || c.platform?.handle} style={{display:"flex",alignItems:"center",gap:6,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:4,padding:"6px 10px"}}>
-                <Pfp src={c.platform?.thumbnail || c.channel?.thumbnail} size={18} name={c.platform?.displayName || c.platform?.handle}/>
+                <Pfp srcs={getChannelThumbs(c)} size={18} name={c.platform?.displayName || c.platform?.handle}/>
                 <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text2)"}}>{c.platform?.displayName || c.platform?.handle}</span>
                 <span style={{fontFamily:"DM Mono",fontSize:8,color:"#444"}}>{fmt(c.platform?.followers || 0)} followers</span>
               </div>
@@ -566,7 +688,7 @@ function BrandView({ brandId, onBack, brands }) {
                 const isActive = dbBrand.handleStatus?.[key] !== false;
                 return (
                   <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:6,background:"var(--surface2)",borderRadius:3,border:"1px solid var(--border)",opacity:isActive?1:.6}}>
-                    <Pfp src={c?.platform?.thumbnail || c?.channel?.thumbnail} size={22} name={showName}/>
+                    <Pfp srcs={getChannelThumbs(c)} size={22} name={showName}/>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         <span style={{fontSize:10,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{showName}</span>
@@ -642,8 +764,8 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
   const { apiKey, instagramConfigured, fetchChannel, channelData } = useYouTubeContext();
 
   const handleSync = async (targetBrandId) => {
-    if (syncPlatform === "instagram") return;
-    if (!apiKey || !syncHandle.trim() || !targetBrandId) return;
+    if (!syncHandle.trim() || !targetBrandId) return;
+    if (syncPlatform !== "instagram" && !apiKey) return;
     setSyncLoading(true); setSyncError(null);
     try {
       const entry = await fetchChannel(syncHandle.trim(), syncPlatform, true);
@@ -659,9 +781,6 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
     setSyncLoading(false);
   };
 
-  const handleConnectInstagram = (targetBrandId) => {
-    window.location.href = getInstagramAuthUrl(targetBrandId);
-  };
 
   return (
     <div>
@@ -696,10 +815,10 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                   const isActive = b.handleStatus?.[key] !== false;
                   return (
                     <div key={key} className="arow" style={!isActive ? {opacity:.45} : undefined}>
-                      <Pfp src={d?.platform?.thumbnail || d?.channel?.thumbnail} size={28} name={showName}/>
+                      <Pfp srcs={getChannelThumbs(d)} size={28} name={showName}/>
                       <div className="ainfo">
                         <div className="ahandle">{showName}</div>
-                        <div className="atag">{!isActive ? "deactivated" : d ? pt : "not synced"}</div>
+                        <div className="atag">{!isActive ? `${pt} · deactivated` : d ? pt : "not synced"}</div>
                       </div>
                       <div className="ameta">
                         <span>{d ? (d.platform?.followers ? fmt(d.platform.followers) + " followers" : "—") : "—"}</span><br/>
@@ -739,54 +858,33 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
         <div className="ovrl" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="mtitle">ADD ACCOUNT</div>
-            <div className="msub">Add a YouTube, TikTok, or Instagram account. Select a brand to assign it to.</div>
+            <div className="msub">Add a YouTube or TikTok account. Select a brand to assign it to.</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:12}}>
               <span className={`chip ${apiKey?"cig":"ctt"}`}>{apiKey ? "API KEY OK" : "NO API KEY"}</span>
-              {instagramConfigured && <span className="chip cig">INSTAGRAM OK</span>}
             </div>
             <div className="fg">
               <label className="flbl">Platform</label>
               <select className="fselect" value={syncPlatform} onChange={e => { setSyncPlatform(e.target.value); setSyncError(null); }} style={{width:"100%"}}>
                 <option value="youtube">YouTube</option>
                 <option value="tiktok">TikTok</option>
-                <option value="instagram">Instagram</option>
               </select>
             </div>
-            {syncPlatform === "instagram" ? (
-              <>
-                <div className="fg">
-                  <label className="flbl">Brand</label>
-                  <select className="fselect" value={syncBrandId || ""} onChange={e => setSyncBrandId(e.target.value || null)} style={{width:"100%"}}>
-                    <option value="">Select brand…</option>
-                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                </div>
-                <div className="msub" style={{marginBottom:12}}>Connect your Instagram account with one click. You’ll be redirected to Instagram to authorize.</div>
-                <div className="macts">
-                  <button className="ibtn" onClick={() => { setModal(null); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
-                  <button className="ibtn primary" disabled={!instagramConfigured || !syncBrandId} onClick={() => handleConnectInstagram(syncBrandId)}>Connect with Instagram</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="fg">
-                  <label className="flbl">Handle</label>
-                  <input className="finput" placeholder={syncPlatform === "tiktok" ? "e.g. charlidamelio" : "e.g. @RawTruth.Podcast"} value={syncHandle} onChange={e => { setSyncHandle(e.target.value); setSyncError(null); }} style={{width:"100%"}}/>
-                </div>
-                <div className="fg">
-                  <label className="flbl">Brand</label>
-                  <select className="fselect" value={syncBrandId || ""} onChange={e => setSyncBrandId(e.target.value || null)} style={{width:"100%"}}>
-                    <option value="">Select brand…</option>
-                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                </div>
-                {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
-                <div className="macts">
-                  <button className="ibtn" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
-                  <button className="ibtn primary" disabled={!apiKey || syncLoading || !syncBrandId} onClick={() => handleSync(syncBrandId)}>{syncLoading ? "Syncing…" : "ADD ACCOUNT"}</button>
-                </div>
-              </>
-            )}
+            <div className="fg">
+              <label className="flbl">Handle</label>
+              <input className="finput" placeholder={syncPlatform === "tiktok" ? "e.g. charlidamelio" : "e.g. @RawTruth.Podcast"} value={syncHandle} onChange={e => { setSyncHandle(e.target.value); setSyncError(null); }} style={{width:"100%"}}/>
+            </div>
+            <div className="fg">
+              <label className="flbl">Brand</label>
+              <select className="fselect" value={syncBrandId || ""} onChange={e => { setSyncBrandId(e.target.value || null); setSyncError(null); }} style={{width:"100%"}}>
+                <option value="">Select brand…</option>
+                {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
+            <div className="macts">
+              <button className="ibtn" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
+              <button className="ibtn primary" disabled={!apiKey || syncLoading || !syncBrandId} onClick={() => handleSync(syncBrandId)}>{syncLoading ? "Syncing…" : "ADD ACCOUNT"}</button>
+            </div>
           </div>
         </div>
       )}
@@ -836,12 +934,48 @@ export default function App() {
     }
   }, [fetchChannel]);
 
+  const addHandleToBrand = useCallback(async (brandId, handle, platform = "youtube") => {
+    if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, platform);
+    const key = ck(handle, platform);
+    setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, key])], handleStatus: { ...b.handleStatus, [key]: true } } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
+  }, []);
+
+  const igAutoAdded = useRef(false);
+  useEffect(() => {
+    if (brandsLoading || igAutoAdded.current || !brands.length) return;
+    const igHandles = getInstagramHandles();
+    if (!igHandles.length) return;
+    igAutoAdded.current = true;
+    igHandles.forEach(async (handle) => {
+      const key = ck(handle, "instagram");
+      const alreadyAdded = brands.some(b => b.handles.includes(key));
+      if (alreadyAdded) {
+        fetchChannel(handle, "instagram").catch(() => {});
+        return;
+      }
+      const matchBrand = brands.find(b =>
+        b.name.toLowerCase().replace(/[^a-z0-9]/g, "").includes(handle.toLowerCase().replace(/[^a-z0-9]/g, ""))
+        || handle.toLowerCase().replace(/[^a-z0-9]/g, "").includes(b.name.toLowerCase().replace(/[^a-z0-9]/g, ""))
+      ) || brands[0];
+      if (matchBrand) {
+        await addHandleToBrand(matchBrand.id, handle, "instagram").catch(() => {});
+        fetchChannel(handle, "instagram").catch(() => {});
+      }
+    });
+  }, [brands, brandsLoading, fetchChannel, addHandleToBrand]);
+
   const handledInstagramReturn = useRef(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ig = params.get("instagram");
     if (ig && isSupabaseConfigured() && !handledInstagramReturn.current) {
       handledInstagramReturn.current = true;
+      const isPopup = !!window.opener;
+      if (isPopup && window.opener) {
+        window.opener.location.href = `${window.location.origin}${window.location.pathname}?instagram=${ig}${params.get("brandId") ? `&brandId=${params.get("brandId")}` : ""}`;
+        window.close();
+        return;
+      }
       window.history.replaceState({}, "", window.location.pathname);
       fetchBrandsWithChannels()
         .then(res => {
@@ -871,12 +1005,6 @@ export default function App() {
     setBrands(prev => { const next = prev.filter(x => x.id !== id); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, [brands]);
 
-  const addHandleToBrand = useCallback(async (brandId, handle, platform = "youtube") => {
-    if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, platform);
-    const key = ck(handle, platform);
-    setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, key])], handleStatus: { ...b.handleStatus, [key]: true } } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
-  }, []);
-
   const removeHandleFromBrand = useCallback(async (brandId, handle, platform) => {
     if (isSupabaseConfigured()) await dbRemoveChannelFromBrand(brandId, handle, platform);
     const key = ck(handle, platform);
@@ -895,12 +1023,23 @@ export default function App() {
     try {
       const s = localStorage.getItem(LAST_REFRESH_KEY);
       if (s) return new Date(s);
-      const now = new Date();
-      localStorage.setItem(LAST_REFRESH_KEY, now.toISOString());
-      return now;
-    } catch { return new Date(); }
+      return null;
+    } catch { return null; }
   });
   const [syncErrors, setSyncErrors] = useState([]);
+
+  const refreshLastSync = useCallback(async () => {
+    if (!isSupabaseConfigured()) return;
+    const dbTime = await fetchLastSyncTime().catch(() => null);
+    if (dbTime) setLastSync(prev => (!prev || dbTime > prev ? dbTime : prev));
+  }, []);
+
+  useEffect(() => {
+    refreshLastSync();
+    const id = setInterval(refreshLastSync, 120000);
+    return () => clearInterval(id);
+  }, [refreshLastSync]);
+
   const syncAll = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
@@ -921,10 +1060,11 @@ export default function App() {
       const now = new Date();
       setLastSync(now);
       try { localStorage.setItem(LAST_REFRESH_KEY, now.toISOString()); } catch {}
+      if (isSupabaseConfigured()) refreshLastSync();
     } finally {
       setSyncing(false);
     }
-  }, [brands, fetchChannel, syncing]);
+  }, [brands, fetchChannel, syncing, refreshLastSync]);
 
   const SYNC_KEY = "tambareni-last-auto-sync";
   useEffect(() => {
@@ -933,12 +1073,15 @@ export default function App() {
       const last = localStorage.getItem(SYNC_KEY);
       const lastDate = last ? new Date(last).toDateString() : null;
       if (lastDate === now.toDateString()) return;
-      if (now.getHours() === 23 && now.getMinutes() >= 59) {
+      const h = now.getHours(), m = now.getMinutes();
+      const inWindow = (h === 23 && m >= 58) || (h === 0 && m <= 2);
+      if (inWindow) {
         localStorage.setItem(SYNC_KEY, now.toISOString());
         syncAll();
       }
     };
-    const id = setInterval(check, 30000);
+    check();
+    const id = setInterval(check, 15000);
     return () => clearInterval(id);
   }, [syncAll]);
 
@@ -948,7 +1091,7 @@ export default function App() {
       <div className="app">
         <div className="sidebar">
           <div className="logo-area">
-            <img src={tmLogo} alt="Tambareni Media" style={{width:48,height:48,borderRadius:6,objectFit:"cover",marginBottom:10,transform:"scale(1.1)"}}/>
+            <img src="/tm-logo-icon.jpg" alt="Tambareni Media" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
             <div className="logo-text">TAMBARENI<br/>MEDIA<br/>ANALYTICS</div>
           </div>
           <div className="nav-sec">
@@ -975,12 +1118,12 @@ export default function App() {
           </div>
           <div style={{marginTop:"auto",padding:"14px 18px",borderTop:"1px solid var(--border)"}}>
             <div style={{fontFamily:"DM Mono",fontSize:8,color:"#333",letterSpacing:2}}>
-              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Auto-sync: 11:59 PM daily</span></>
+              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Daily sync: 11:59 PM</span></>
             </div>
           </div>
         </div>
         <div className="main" onMouseDown={e => { const el = document.activeElement, t = e.target; if ((el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") && !t.closest("input,textarea,select,button")) el.blur(); }}>
-          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors}/>}
+          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors}/>}
           {page === "brand" && <BrandView brandId={brandId} onBack={() => go("overview")} brands={brands}/>}
           {page === "settings" && <Settings brands={brands} brandsLoading={brandsLoading} addBrand={addBrand} removeBrand={id => removeBrand(id, removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel} toggleActive={toggleActive}/>}
         </div>

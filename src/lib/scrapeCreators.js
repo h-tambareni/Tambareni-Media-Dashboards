@@ -1,15 +1,37 @@
 /**
  * ScrapeCreators API wrapper for YouTube + TikTok
  * Docs: https://docs.scrapecreators.com
- * Auth: x-api-key header
+ * When apiKey is null/empty and Supabase is configured, uses Edge Function proxy (keeps key server-side)
  */
 
 const BASE = "https://api.scrapecreators.com";
 
 async function sc(path, params, apiKey) {
+  const useProxy = !apiKey && import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
+  let res, data;
+  if (useProxy) {
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+    res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/scrapecreators-proxy`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${anonKey}`,
+        "apikey": anonKey,
+      },
+      body: JSON.stringify({ path: path.startsWith("/") ? path : `/${path}`, params: params || {} }),
+    });
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errMsg = data?.error || data?.message || `Proxy: HTTP ${res.status}`;
+      if (res.status === 401) throw new Error(`${errMsg} (check SCRAPECREATORS_API_KEY in Supabase secrets or use VITE_SCRAPECREATORS_API_KEY in .env)`);
+      throw new Error(errMsg);
+    }
+    return data;
+  }
+  if (!apiKey) throw new Error("ScrapeCreators: Set VITE_SCRAPECREATORS_API_KEY or configure Supabase + SCRAPECREATORS_API_KEY secret");
   const sp = new URLSearchParams(params);
   const url = `${BASE}${path}?${sp}`;
-  const res = await fetch(url, { headers: { "x-api-key": apiKey } });
+  res = await fetch(url, { headers: { "x-api-key": apiKey } });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const code = res.status;
@@ -23,10 +45,21 @@ async function sc(path, params, apiKey) {
 
 // ─── YouTube ───────────────────────────────────────────────────────────────
 
+function extractYTThumbnail(data) {
+  const sources = data?.avatar?.image?.sources || [];
+  if (sources.length) {
+    const best = sources[sources.length - 1]?.url || sources[0]?.url;
+    if (best) return best;
+  }
+  if (data?.avatar?.url) return data.avatar.url;
+  if (data?.thumbnail) return typeof data.thumbnail === "string" ? data.thumbnail : data.thumbnail?.url;
+  return null;
+}
+
 export async function fetchYTChannel(apiKey, handle) {
   const clean = handle.replace(/^@/, "");
   const data = await sc("/v1/youtube/channel", { handle: clean }, apiKey);
-  const sources = data.avatar?.image?.sources || [];
+  const thumb = extractYTThumbnail(data);
   return {
     id: data.channelId,
     handle: (data.handle || clean).replace(/^@/, ""),
@@ -34,7 +67,7 @@ export async function fetchYTChannel(apiKey, handle) {
     subscribers: data.subscriberCount ?? 0,
     viewCount: data.viewCount ?? 0,
     videoCount: data.videoCount ?? 0,
-    thumbnail: sources[sources.length - 1]?.url || sources[0]?.url || null,
+    thumbnail: thumb,
     description: data.description,
     country: data.country,
     platform: "youtube",

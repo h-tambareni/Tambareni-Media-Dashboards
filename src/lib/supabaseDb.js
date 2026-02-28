@@ -183,3 +183,14 @@ export async function fetchDailySnapshots(channelHandle, platform, days = 90) {
     .order("snapshot_date", { ascending: true });
   return data ?? [];
 }
+
+export async function fetchLastSyncTime() {
+  if (!isSupabaseConfigured()) return null;
+  const { data } = await supabase
+    .from("daily_snapshots")
+    .select("created_at")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+  return data?.created_at ? new Date(data.created_at) : null;
+}

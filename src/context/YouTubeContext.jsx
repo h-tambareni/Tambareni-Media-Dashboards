@@ -7,7 +7,7 @@
  */
 import { createContext, useContext, useState, useCallback } from "react";
 import { fetchYTChannel, fetchYTChannelVideos, fetchTTProfile, fetchTTProfileVideos } from "../lib/scrapeCreators";
-import { fetchInstagramChannel } from "../lib/instagramApi";
+import { fetchInstagramDirect, hasInstagramTokens } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
@@ -55,7 +55,7 @@ export function YouTubeProvider({ children }) {
                 }
               }
             }
-            const raw = await fetchInstagramChannel(compositeKey);
+            const raw = await fetchInstagramDirect(handle);
             const posts = (raw.posts || []).map(p => ({ ...p, emoji: "📷" }));
             const lastPost = posts[0];
             const avgV = posts.length ? Math.round(posts.reduce((s, x) => s + (x.views || 0), 0) / posts.length) : 0;
@@ -91,7 +91,8 @@ export function YouTubeProvider({ children }) {
         return p;
       }
 
-      if (!apiKey) throw new Error("VITE_SCRAPECREATORS_API_KEY not set");
+      const scKey = apiKey ? apiKey : (isSupabaseConfigured() ? null : undefined);
+      if (!scKey && scKey !== null) throw new Error("Configure Supabase or set VITE_SCRAPECREATORS_API_KEY");
       const existing = inFlight.get(flightKey);
       if (existing) return existing;
 
@@ -118,11 +119,11 @@ export function YouTubeProvider({ children }) {
 
           let ch, videos;
           if (plat === "tiktok") {
-            ch = await fetchTTProfile(apiKey, handle);
-            videos = await fetchTTProfileVideos(apiKey, ch.handle || handle, { fullFetch: needsFullFetch, userId: ch.id });
+            ch = await fetchTTProfile(scKey, handle);
+            videos = await fetchTTProfileVideos(scKey, ch.handle || handle, { fullFetch: needsFullFetch, userId: ch.id });
           } else {
-            ch = await fetchYTChannel(apiKey, handle);
-            videos = await fetchYTChannelVideos(apiKey, handle, { fullFetch: needsFullFetch });
+            ch = await fetchYTChannel(scKey, handle);
+            videos = await fetchYTChannelVideos(scKey, handle, { fullFetch: needsFullFetch });
           }
 
           const newPostsRaw = videos.map(v => ({
@@ -217,8 +218,8 @@ export function YouTubeProvider({ children }) {
   );
 
   const value = {
-    apiKey: !!apiKey,
-    instagramConfigured: !!(import.meta.env.VITE_INSTAGRAM_APP_ID && import.meta.env.VITE_SUPABASE_URL),
+    apiKey: !!apiKey || isSupabaseConfigured(),
+    instagramConfigured: hasInstagramTokens(),
     fetchChannel,
     removeChannel,
     channelData: channels,
