@@ -12,7 +12,7 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
   upsertChannelCache, deleteChannelCache, upsertDailySnapshot, fetchDailySnapshots,
-  ck,
+  updateBrandChannelYoutubeId, ck,
 } from "../lib/supabaseDb";
 
 const PlatformContext = createContext(null);
@@ -33,7 +33,7 @@ export function YouTubeProvider({ children }) {
   }, []);
 
   const fetchChannel = useCallback(
-    async (handleOrName, platformHint = "youtube", forceRefresh = false, forceFullFetch = false) => {
+    async (handleOrName, platformHint = "youtube", forceRefresh = false, forceFullFetch = false, opts = {}) => {
       const handle = (handleOrName?.trim() || "").replace(/^@/, "");
       const plat = platformHint || "youtube";
       const compositeKey = ck(handle, plat);
@@ -116,7 +116,8 @@ export function YouTubeProvider({ children }) {
             }
           }
 
-          const cachedSnap = isSupabaseConfigured() ? parseCachedSnapshot(await getCachedChannelWithFallback(handle, plat)) : null;
+          const cachedRow = isSupabaseConfigured() ? await getCachedChannelWithFallback(handle, plat) : null;
+          const cachedSnap = cachedRow ? parseCachedSnapshot(cachedRow) : null;
           const cachedPosts = cachedSnap?.posts || [];
           const lastFullFetch = cachedSnap?.last_full_fetch_at ? new Date(cachedSnap.last_full_fetch_at) : null;
           const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
@@ -127,8 +128,14 @@ export function YouTubeProvider({ children }) {
             ch = await fetchTTProfile(scKey, handle);
             videos = await fetchTTProfileVideos(scKey, ch.handle || handle, { fullFetch: needsFullFetch, userId: ch.id });
           } else {
-            ch = await fetchYTChannel(scKey, handle);
-            videos = await fetchYTChannelVideos(scKey, handle, { fullFetch: needsFullFetch });
+            const cachedChannelId = opts.youtubeChannelId || cachedRow?.youtube_channel_id || cachedSnap?.channel?.id;
+            ch = await fetchYTChannel(scKey, handle, { channelId: cachedChannelId });
+            videos = await fetchYTChannelVideos(scKey, handle, {
+              fullFetch: needsFullFetch,
+              channelId: ch.id,
+              channelUrl: ch.channelUrl,
+              canonicalHandle: ch.handle,
+            });
           }
 
           const newPostsRaw = videos.map(v => ({
@@ -204,6 +211,7 @@ export function YouTubeProvider({ children }) {
 
           if (isSupabaseConfigured()) {
             upsertChannelCache(cacheKey, entry).catch(() => {});
+            if (plat === "youtube" && ch?.id) updateBrandChannelYoutubeId(handle, plat, ch.id).catch(() => {});
             upsertDailySnapshot(handle, plat, {
               totalViews: totalV,
               followers: ch.subscribers,

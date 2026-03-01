@@ -37,6 +37,7 @@ export async function fetchBrandsWithChannels() {
   }
   const byBrand = {};
   const channelMeta = {};
+  const ytKeysNeedingCache = [];
   (channelsData ?? []).forEach((row) => {
     const plat = row.platform || "youtube";
     const key = ck(row.channel_handle, plat);
@@ -48,7 +49,21 @@ export async function fetchBrandsWithChannels() {
       youtubeChannelId: row.youtube_channel_id,
       active: row.active !== false,
     };
+    if (plat === "youtube" && !row.youtube_channel_id) ytKeysNeedingCache.push(key);
   });
+  // Enrich YouTube channelMeta with youtube_channel_id from channel_cache when brand_channels lacks it
+  if (ytKeysNeedingCache.length) {
+    const cacheHandles = [...new Set([...ytKeysNeedingCache, ...ytKeysNeedingCache.map(k => pk(k).handle)])];
+    const { data: cacheRows } = await supabase
+      .from("channel_cache")
+      .select("channel_handle, youtube_channel_id")
+      .in("channel_handle", cacheHandles)
+      .not("youtube_channel_id", "is", null);
+    (cacheRows ?? []).forEach((r) => {
+      const key = ytKeysNeedingCache.find(k => k === r.channel_handle || pk(k).handle === r.channel_handle);
+      if (key && channelMeta[key]) channelMeta[key].youtubeChannelId = r.youtube_channel_id;
+    });
+  }
   const brands = brandsData.map((b) => ({
     id: b.id,
     name: b.name,
@@ -76,7 +91,7 @@ export async function deleteBrand(id) {
 
 export async function addChannelToBrand(brandId, channelHandle, platform = "youtube", youtubeChannelId = null) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const h = norm(channelHandle) || channelHandle;
+  const h = (channelHandle || "").trim().replace(/^@/, "");
   const { data, error } = await supabase
     .from("brand_channels")
     .insert({ brand_id: brandId, channel_handle: h, platform, youtube_channel_id: youtubeChannelId })
@@ -104,6 +119,13 @@ export async function toggleChannelActive(brandId, channelHandle, platform, acti
   if (platform) q = q.eq("platform", platform);
   const { error } = await q;
   if (error) console.warn("toggleChannelActive failed (run migration 002):", error.message);
+}
+
+export async function updateBrandChannelYoutubeId(channelHandle, platform, youtubeChannelId) {
+  if (!isSupabaseConfigured() || platform !== "youtube" || !youtubeChannelId) return;
+  const h = norm(channelHandle) || channelHandle;
+  const candidates = [...new Set([h, channelHandle].filter(Boolean))];
+  await supabase.from("brand_channels").update({ youtube_channel_id: youtubeChannelId }).in("channel_handle", candidates).eq("platform", "youtube");
 }
 
 // ─── Channel cache ─────────────────────────────────────────────────────────

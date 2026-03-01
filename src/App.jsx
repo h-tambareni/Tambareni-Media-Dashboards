@@ -94,17 +94,19 @@ const css = `
 .ptab:hover { color:var(--text); }
 .ptab.act { color:var(--text); border-bottom-color:var(--red); }
 .pgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-.pcard { background:var(--surface2); border:1px solid var(--border); border-radius:4px; overflow:hidden; cursor:pointer; transition:all .12s; }
+.pcard { background:var(--surface2); border:1px solid var(--border); border-radius:4px; overflow:hidden; cursor:pointer; transition:all .12s; display:flex; flex-direction:row; }
 .pcard:hover { border-color:var(--border2); }
 .pcard.ba { border-color:rgba(214,48,49,.35); }
-.pthumb { height:100px; background:#161616; display:flex; align-items:center; justify-content:center; font-size:26px; position:relative; overflow:hidden; }
+.pthumb { width:33%; flex-shrink:0; min-height:200px; background:#161616; display:flex; align-items:center; justify-content:center; font-size:26px; position:relative; overflow:hidden; }
 .bab { position:absolute; top:5px; right:5px; background:var(--red); font-family:var(--mono); font-size:7px; padding:2px 4px; border-radius:2px; color:white; }
-.pbody { padding:9px 10px; }
-.pcap { font-size:10px; color:var(--text2); margin-bottom:6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.pvbig { font-family:var(--display); font-size:17px; color:var(--text); }
-.psr { display:flex; gap:8px; margin-top:5px; }
-.pst { font-family:var(--mono); font-size:9px; color:var(--text3); display:flex; align-items:center; gap:2px; }
-.pst span { color:var(--text2); }
+.pbody { flex:1; min-width:0; padding:12px 14px; display:flex; flex-direction:column; justify-content:flex-start; }
+.pcap { font-size:11px; color:var(--text2); margin-bottom:8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.pvbig { font-family:var(--display); font-size:24px; letter-spacing:1px; color:var(--text); margin-bottom:10px; }
+.psr { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:auto; flex-wrap:wrap; }
+.psr-left { display:flex; align-items:center; gap:14px; }
+.pst { font-family:var(--display); font-size:18px; letter-spacing:1px; color:var(--text3); display:flex; align-items:center; gap:4px; }
+.pst span { color:var(--text2); font-family:var(--display); font-size:18px; letter-spacing:1px; }
+.pst-lv { font-family:var(--display); font-size:18px; letter-spacing:1px; color:var(--text2); flex-shrink:0; }
 .arow { display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:4px; margin-bottom:5px; }
 .picon { width:28px; height:28px; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
 .pig { background:linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045); }
@@ -211,7 +213,7 @@ const css = `
   .bcard-name { font-size: 14px; }
   .bcard-platforms > div { flex: 1 1 min(100%, 140px) !important; min-width: 0; }
   .pgrid { grid-template-columns: 1fr; }
-  .pcard .pthumb { height: 80px; font-size: 22px; }
+  .pcard .pthumb { min-height: 160px; width: 33%; font-size: 22px; }
   .pbody { padding: 8px 10px; }
   .pcap { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pvbig { font-size: 15px; }
@@ -506,7 +508,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
               </ResponsiveContainer>
               </div>
             ) : (
-              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Daily growth builds as you sync. Need 2+ days of data.</div>
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>1 dot per day from auto-sync. Need 2+ days of data.</div>
             )}
           </div>
           <div className="panel" style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -642,17 +644,59 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
   );
 }
 
+const PLAT_TAB_LABEL = { all: "ALL", instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" };
+const getPlat = (c) => (c?.platform?.platformType || c?.channel?.platform || "youtube");
+
+function BrandResyncButton({ dbBrand, platTab, fetchChannel, onAccounts }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const key = (dbBrand.handles || []).find(k => (pk(k).platform || "youtube") === platTab);
+  if (!key) return <span>Go to <button type="button" className="ibtn" style={{margin:"0 4px"}} onClick={onAccounts}>Accounts</button> to re-sync.</span>;
+  const { handle: rawHandle, platform: rawPlat } = pk(key);
+  const doResync = async () => {
+    setLoading(true); setErr(null);
+    try {
+      await fetchChannel(rawHandle, rawPlat, true, true);
+    } catch (e) { setErr(e?.message || String(e)); }
+    setLoading(false);
+  };
+  return (
+    <>
+      <button type="button" className="ibtn primary" disabled={loading} onClick={doResync}>{loading ? "Syncing…" : "⟳ Re-sync videos"}</button>
+      {err && <div style={{marginTop:8,color:"var(--red)",fontSize:11}}>{err}</div>}
+    </>
+  );
+}
+
+const BRAND_TAB_KEY = "tambareni-brand-tab";
 function BrandView({ brandId, onBack, brands, onAccounts }) {
-  const { channelData } = useYouTubeContext();
+  const { channelData, fetchChannel } = useYouTubeContext();
   const dbBrand = brands?.find(b => b.id === brandId);
   if (!dbBrand) return null;
 
   const allHandles = dbBrand.handles;
-  const chData = allHandles.map(key => channelData[key]).filter(Boolean);
-  const hasChannelData = chData.length > 0;
+  const allChData = allHandles.map(key => channelData[key]).filter(Boolean);
+  const hasChannelData = allChData.length > 0;
+  const platOrder = ["tiktok", "instagram", "youtube"];
+  const availablePlatforms = platOrder.filter(p => allChData.some(c => getPlat(c) === p));
+  const validTabs = ["all", "youtube", "tiktok", "instagram", ...availablePlatforms];
+  const [platTab, setPlatTab] = useState(() => {
+    try {
+      const raw = localStorage.getItem(`${BRAND_TAB_KEY}-${brandId}`);
+      if (raw && validTabs.includes(raw)) return raw;
+    } catch {}
+    return "all";
+  });
+  const actualTab = availablePlatforms.includes(platTab) || platTab === "all" ? platTab : "all";
+  const setPlatTabPersist = useCallback((tab) => {
+    setPlatTab(tab);
+    try { localStorage.setItem(`${BRAND_TAB_KEY}-${brandId}`, tab); } catch {}
+  }, [brandId]);
+  const chData = actualTab === "all" ? allChData : allChData.filter(c => getPlat(c) === actualTab);
+
   const totalFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
   const totalViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
-  const postsRaw = chData.flatMap(c => c.posts || []);
+  const postsRaw = chData.flatMap(c => (c.posts || []).map(p => ({ ...p, _plat: getPlat(c) })));
   const posts = (() => {
     const byId = new Map();
     postsRaw.forEach(p => {
@@ -661,25 +705,40 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     });
     return Array.from(byId.values());
   })();
-  posts.sort((a, b) => (b.views || 0) - (a.views || 0));
+  posts.sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
   const avgV = posts.length ? Math.round(posts.reduce((s, p) => s + p.views, 0) / posts.length) : 0;
   const totalLikes = posts.reduce((s, p) => s + (p.likes || 0), 0);
+  const totalPostViews = posts.reduce((s, p) => s + (p.views || 0), 0);
+  const avgLv = totalPostViews > 0 ? ((totalLikes / totalPostViews) * 100).toFixed(2) : "—";
   const totalComments = posts.reduce((s, p) => s + (p.cmts || 0), 0);
   const thumbs = getAllBrandThumbs(dbBrand, channelData);
-  const platforms = [...new Set(chData.map(c => c.platform?.platformType || c.channel?.platform || "youtube"))];
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  const dailyViews = chData.flatMap(c => c.dailyViews || []).filter(row => row.raw !== todayStr);
-  const wklyData = (() => {
-    const byWeek = {};
-    dailyViews.forEach(row => {
-      const d = new Date(row.raw); const w = getWeekKey(d);
-      if (!byWeek[w]) byWeek[w] = { n: w, v: 0 };
-      byWeek[w].v += (row.views || 0);
+  const dailyViewsRaw = chData.flatMap(c => c.dailyViews || []).filter(row => row.raw !== todayStr);
+  const viewsData = (() => {
+    const byDate = {};
+    dailyViewsRaw.forEach(row => {
+      const key = row.raw || row.d;
+      if (!byDate[key]) byDate[key] = { d: row.d, raw: key, cumViews: 0 };
+      byDate[key].cumViews += (row.views || 0);
     });
-    return Object.values(byWeek).sort((a, b) => a.n.localeCompare(b.n));
+    let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+    if (sorted.length === 1) {
+      const d = sorted[0].raw || "";
+      const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
+      prev.setDate(prev.getDate() - 1);
+      const prevStr = prev.toISOString().slice(0, 10);
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const prevD = `${months[prev.getMonth()]} ${prev.getDate()}`;
+      sorted = [{ d: prevD, raw: prevStr, cumViews: 0 }, ...sorted];
+    }
+    return sorted.map((row, i) => ({
+      ...row,
+      views: i === 0 ? 0 : Math.max(0, row.cumViews - (sorted[i - 1].cumViews || 0)),
+    }));
   })();
-  function getWeekKey(d) { const start = new Date(d); start.setDate(1); const w = Math.ceil(d.getDate() / 7); return `${start.toLocaleString("en", { month: "short" })} W${w}`; }
+
+  const tabs = [{ k: "all", label: "ALL" }, ...availablePlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p }))];
 
   return (
     <div>
@@ -688,7 +747,6 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
           <button className="ibtn" onClick={onBack}>← BACK</button>
           <Pfp srcs={thumbs} size={24} name={dbBrand.name}/>
           <span className="topbar-title">{dbBrand.name}</span>
-          {platforms.map(pt => <span key={pt} className={`chip ${pt==="tiktok"?"ctt":pt==="instagram"?"cig-insta":"cyt"}`}>{pt.toUpperCase()}</span>)}
           {hasChannelData && <span className="bstatus s-active">active</span>}
         </div>
         <button className="ibtn" onClick={onAccounts}>Accounts</button>
@@ -699,119 +757,112 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
             <span className="alert-txt"><strong>No synced data.</strong> Go to <strong>Accounts</strong> → re-sync channels for this brand.</span>
           </div>
         )}
-        <div className="krow" style={{gridTemplateColumns:"repeat(5,1fr)"}}>
-          {[
-            {l:"Followers",v:fmt(totalFollowers)},{l:"Total Views",v:fmt(totalViews)},
-            {l:"Avg Views/Post",v:fmt(avgV)},{l:"Total Likes",v:fmt(totalLikes)},{l:"Comments",v:fmt(totalComments)},
-          ].map(k => (
-            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div></div>
-          ))}
-        </div>
-
-        {chData.length > 1 && (
-          <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
-            {chData.map(c => (
-              <div key={c.channel?.id || c.platform?.handle} style={{display:"flex",alignItems:"center",gap:6,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:4,padding:"6px 10px"}}>
-                <Pfp srcs={getChannelThumbs(c)} size={18} name={c.platform?.displayName || c.platform?.handle}/>
-                <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text2)"}}>{c.platform?.displayName || c.platform?.handle}</span>
-                <span style={{fontFamily:"DM Mono",fontSize:8,color:"#444"}}>{fmt(getFollowers(c))} followers</span>
-              </div>
+        {hasChannelData && (
+          <div className="tpill" style={{marginBottom:16}}>
+            {tabs.map(({ k, label }) => (
+              <button key={k} type="button" className={`tbtn ${actualTab === k ? "act" : ""}`} onClick={() => setPlatTabPersist(k)}>{label}</button>
             ))}
           </div>
         )}
 
-        <div className="g2">
-          <div className="panel">
-            <div className="ph"><span className="ptitle">WEEKLY VIEWS</span></div>
-            {wklyData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={150}>
-                <BarChart data={wklyData} margin={{top:0,right:0,bottom:0,left:-22}}>
-                  <XAxis dataKey="n" tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false}/>
-                  <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
-                  <Tooltip content={<TTip/>}/>
-                  <Bar dataKey="v" fill="#ff6b6b" radius={[2,2,0,0]} opacity={0.8} name="Views"/>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div style={{height:150,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>Views chart builds over time with daily syncs</div>
-            )}
-          </div>
-          <div className="panel">
-            <div className="ph"><span className="ptitle">ACCOUNTS</span></div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {dbBrand.handles.map(key => {
-                const c = channelData[key];
-                const { handle: rawH, platform: rawP } = pk(key);
-                const showName = c?.platform?.displayName || c?.platform?.handle || rawH;
-                const isActive = dbBrand.handleStatus?.[key] !== false;
-                return (
-                  <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:6,background:"var(--surface2)",borderRadius:3,border:"1px solid var(--border)",opacity:isActive?1:.6}}>
-                    <Pfp srcs={getChannelThumbs(c)} size={22} name={showName}/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                        <span style={{fontSize:10,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{showName}</span>
-                        <span style={{fontSize:7,padding:"1px 4px",borderRadius:2,flexShrink:0,background:isActive?"var(--green-dim)":"var(--red-dim)",color:isActive?"var(--green)":"var(--red)"}}>{isActive?"active":"inactive"}</span>
-                      </div>
-                      <div style={{fontFamily:"DM Mono",fontSize:8,color:"#555"}}>{c ? fmt(getFollowers(c)) + " followers" : "not synced"}</div>
-                    </div>
-                  </div>
-                );
-              })}
+        {hasChannelData && (
+          <>
+            <div className="krow" style={{gridTemplateColumns:"repeat(5,1fr)"}}>
+              {[
+                {l:"Followers",v:fmt(totalFollowers)},{l:"Total Views",v:fmt(totalViews)},
+                {l:"Avg Views/Post",v:fmt(avgV)},{l:"Total Likes",v:fmt(totalLikes)},{l:"Comments",v:fmt(totalComments)},
+              ].map(k => (
+                <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div></div>
+              ))}
             </div>
-          </div>
-        </div>
 
-        <div className="panel">
-          <div className="ph">
-            <span className="ptitle">POST FEED — {dbBrand.name.toUpperCase()}</span>
-            <span className="pact">AVG {fmt(avgV)} VIEWS/POST · {posts.length} POSTS</span>
-          </div>
-          {posts.length === 0 ? (
-            <div style={{textAlign:"center",padding:"30px",color:"var(--text3)",fontSize:12}}>No posts synced yet.</div>
-          ) : (
-            <>
-              <div className="avgline">
-                <span style={{color:"var(--red)",fontFamily:"DM Mono",fontSize:9,whiteSpace:"nowrap"}}>AVG {fmt(avgV)}</span>
-                <div className="albar"/>
-                <span style={{color:"#333",fontSize:8}}>THRESHOLD</span>
-              </div>
-              <div className="pgrid">
-                {posts.map(p => (
-                  <div key={p.id} className={`pcard${(p.views||0)<avgV?" ba":""}`}>
-                    <div className="pthumb">
-                      {p.thumbnail ? (
-                        <img src={p.thumbnail} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                      ) : (
-                        <span>{p.emoji || "▶️"}</span>
-                      )}
-                      {(p.views||0)<avgV && <span className="bab">BELOW AVG</span>}
-                    </div>
-                    <div className="pbody">
-                      <div className="pcap">{p.cap}</div>
-                      <div className="pvbig">{fmt(p.views)} views</div>
-                      <div className="psr">
-                        <div className="pst">❤️ <span>{fmt(p.likes)}</span></div>
-                        <div className="pst">💬 <span>{p.cmts}</span></div>
-                        {p.shares > 0 && <div className="pst">↗️ <span>{fmt(p.shares)}</span></div>}
+            <div className="panel" style={{marginBottom:14}}>
+              <div className="ph"><span className="ptitle">DAILY GROWTH</span></div>
+              {viewsData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={150}>
+                  <AreaChart data={viewsData} margin={{top:0,right:0,bottom:0,left:-22}}>
+                    <defs>
+                      <linearGradient id="gv-brand" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25}/>
+                        <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="d" tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false}/>
+                    <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
+                    <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
+                    <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv-brand)" name="Views" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{height:150,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>1 dot per day from auto-sync. Need 2+ days of data.</div>
+              )}
+            </div>
+
+            {actualTab !== "all" && posts.length > 0 && (
+              <div className="panel">
+                <div className="ph">
+                  <span className="ptitle">POST FEED — {dbBrand.name.toUpperCase()} · {PLAT_TAB_LABEL[actualTab] || actualTab}</span>
+                  <span className="pact">AVG {fmtNum(avgV)} VIEWS/POST · AVG L/V {avgLv}% · {posts.length} POSTS</span>
+                </div>
+                <div className="avgline">
+                  <span style={{color:"var(--red)",fontFamily:"DM Mono",fontSize:9,whiteSpace:"nowrap"}}>AVG {fmtNum(avgV)}</span>
+                  <div className="albar"/>
+                  <span style={{color:"#333",fontSize:8}}>THRESHOLD</span>
+                </div>
+                <div className="pgrid">
+                  {posts.map(p => (
+                    <div key={p.id} className={`pcard${(p.views||0)<avgV?" ba":""}`}>
+                      <div className="pthumb">
+                        {p.thumbnail ? (
+                          <img src={p.thumbnail} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"center 10%"}}/>
+                        ) : (
+                          <span>{p.emoji || "▶️"}</span>
+                        )}
+                        {(p.views||0)<avgV && <span className="bab">BELOW AVG</span>}
                       </div>
-                      {(p.views||0)>0 && (
-                        <div style={{marginTop:4,fontFamily:"DM Mono",fontSize:8,color:"var(--text3)"}}>
-                          L/V: {((p.likes||0)/(p.views||1)*100).toFixed(2)}%
+                      <div className="pbody">
+                        <div className="pcap">{p.cap}</div>
+                        <div className="pvbig">{fmtNum(p.views ?? 0)} views</div>
+                        <div className="psr">
+                          <div className="psr-left">
+                            <div className="pst">❤️ <span>{fmtNum(p.likes ?? 0)}</span></div>
+                            <div className="pst">💬 <span>{fmtNum(p.cmts ?? 0)}</span></div>
+                            {p.shares > 0 && <div className="pst">↗️ <span>{fmtNum(p.shares ?? 0)}</span></div>}
+                          </div>
+                          {(p.views||0)>0 && (
+                            <div className="pst-lv">
+                              L/V: {((p.likes||0)/(p.views||1)*100).toFixed(2)}%
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </>
-          )}
-        </div>
+            )}
+
+            {actualTab !== "all" && posts.length === 0 && (
+              <div className="panel">
+                <div style={{textAlign:"center",padding:"30px",color:"var(--text3)",fontSize:12}}>
+                  No posts for {PLAT_TAB_LABEL[actualTab]} yet.
+                  <div style={{marginTop:8,fontSize:11}}>Likes and comments come from individual videos — they&apos;ll appear here once videos load.</div>
+                  {chData.length > 0 && (totalViews > 0 || totalFollowers > 0) && (
+                    <div style={{marginTop:12}}>
+                      <BrandResyncButton dbBrand={dbBrand} platTab={actualTab} fetchChannel={fetchChannel} onAccounts={onAccounts}/>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBrand, removeHandleFromBrand, removeChannel, toggleActive, onBack }) {
+function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, addHandleToBrand, removeHandleFromBrand, removeChannel, toggleActive, onBack }) {
   const [modal, setModal] = useState(null);
   const [syncHandle, setSyncHandle] = useState("");
   const [syncPlatform, setSyncPlatform] = useState("youtube");
@@ -829,8 +880,9 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
     try {
       const entry = await fetchChannel(syncHandle.trim(), syncPlatform, true);
       const rawHandle = entry?.channel?.handle || entry?.platform?.handle || entry?.channel?.title;
+      const ytChannelId = entry?.channel?.id || null;
       if (rawHandle) {
-        await addHandleToBrand(targetBrandId, rawHandle, syncPlatform);
+        await addHandleToBrand(targetBrandId, rawHandle, syncPlatform, ytChannelId);
         setSyncHandle("");
         setSyncBrandId(null);
         setSyncError(null);
@@ -874,7 +926,12 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                 <button className="ibtn danger" style={{padding:"3px 8px",fontSize:9}} onClick={async () => await removeBrand(b.id)}>✕ Remove</button>
               </div>
               <div style={{padding:12}}>
-                {b.handles.map(key => {
+                {[...b.handles].sort((a, b) => {
+                  const platOrder = { tiktok: 0, instagram: 1, youtube: 2 };
+                  const pa = pk(a).platform || "youtube";
+                  const pb = pk(b).platform || "youtube";
+                  return (platOrder[pa] ?? 99) - (platOrder[pb] ?? 99);
+                }).map(key => {
                   const d = channelData[key];
                   const { handle: rawHandle, platform: rawPlat } = pk(key);
                   const pt = d?.platform?.platformType || rawPlat;
@@ -889,7 +946,7 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                         <div className="atag">{!isActive ? `${pt} · deactivated` : d ? pt : "not synced"}</div>
                       </div>
                       <div className="ameta">
-                        <span>{d ? (getFollowers(d) ? fmt(getFollowers(d)) + " followers" : "—") : "—"}</span><br/>
+                        <span>{d ? fmt(getFollowers(d)) + " followers" : "—"}</span><br/>
                         <span className={`chip ${isActive ? (d ? "cg" : "ctt") : "cr"}`}>{isActive ? (d ? "ACTIVE" : "SYNC NEEDED") : "INACTIVE"}</span>
                       </div>
                       <div className="aacts">
@@ -899,7 +956,8 @@ function Settings({ brands, brandsLoading, addBrand, removeBrand, addHandleToBra
                             onClick={async () => {
                               setResyncKey(key); setSyncError(null);
                               try {
-                                await fetchChannel(rawHandle, rawPlat, true);
+                                const meta = channelMeta?.[key];
+                                await fetchChannel(rawHandle, rawPlat, true, true, { youtubeChannelId: meta?.youtubeChannelId });
                               } catch (e) {
                                 setSyncError(e.message || String(e));
                               } finally {
@@ -1023,8 +1081,8 @@ export default function App() {
     }
   }, [fetchChannel]);
 
-  const addHandleToBrand = useCallback(async (brandId, handle, platform = "youtube") => {
-    if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, platform);
+  const addHandleToBrand = useCallback(async (brandId, handle, platform = "youtube", youtubeChannelId = null) => {
+    if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, platform, youtubeChannelId);
     const key = ck(handle, platform);
     setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, key])], handleStatus: { ...b.handleStatus, [key]: true } } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, []);
@@ -1137,7 +1195,11 @@ export default function App() {
     return () => clearInterval(id);
   }, [refreshLastSync]);
 
-  const syncAll = useCallback(async () => {
+  const SYNC_PASSWORD = import.meta.env.VITE_SYNC_PASSWORD || "hi";
+  const [syncPwModal, setSyncPwModal] = useState(false);
+  const [syncPwInput, setSyncPwInput] = useState("");
+  const [syncPwError, setSyncPwError] = useState("");
+  const doSyncAll = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
     setSyncErrors([]);
@@ -1163,6 +1225,22 @@ export default function App() {
     }
   }, [brands, fetchChannel, syncing, refreshLastSync]);
 
+  const syncAll = useCallback(() => {
+    setSyncPwModal(true);
+    setSyncPwInput("");
+    setSyncPwError("");
+  }, []);
+  const confirmSyncPw = useCallback(() => {
+    if (syncPwInput === SYNC_PASSWORD) {
+      setSyncPwModal(false);
+      setSyncPwInput("");
+      setSyncPwError("");
+      doSyncAll();
+    } else {
+      setSyncPwError("Wrong password");
+    }
+  }, [syncPwInput, SYNC_PASSWORD, doSyncAll]);
+
   const SYNC_KEY = "tambareni-last-auto-sync";
   useEffect(() => {
     const check = () => {
@@ -1174,13 +1252,13 @@ export default function App() {
       const inWindow = (h === 23 && m >= 58) || (h === 0 && m <= 2);
       if (inWindow) {
         localStorage.setItem(SYNC_KEY, now.toISOString());
-        syncAll();
+        doSyncAll();
       }
     };
     check();
     const id = setInterval(check, 15000);
     return () => clearInterval(id);
-  }, [syncAll]);
+  }, [doSyncAll]);
 
   return (
     <>
@@ -1236,13 +1314,31 @@ export default function App() {
                 <span className="topbar-title">MATCHMAX APP ANALYTICS</span>
                 <button className="ibtn" onClick={() => go("settings")}>Accounts</button>
               </div>
-              <div className="page" style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:16}}>Coming soon</div>
+              <div className="page" style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:16}}>Coming soon...</div>
             </div>
           )}
           {page === "brand" && <BrandView brandId={brandId} onBack={() => go("overview")} brands={brands} onAccounts={() => go("settings")}/>}
-          {page === "settings" && <Settings brands={brands} brandsLoading={brandsLoading} addBrand={addBrand} removeBrand={id => removeBrand(id, removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel} toggleActive={toggleActive} onBack={() => go("overview")}/>}
+          {page === "settings" && <Settings brands={brands} brandsLoading={brandsLoading} channelMeta={channelMeta} addBrand={addBrand} removeBrand={id => removeBrand(id, removeChannel)} addHandleToBrand={addHandleToBrand} removeHandleFromBrand={removeHandleFromBrand} removeChannel={removeChannel} toggleActive={toggleActive} onBack={() => go("overview")}/>}
         </div>
       </div>
+
+      {syncPwModal && (
+        <div className="ovrl" onClick={() => !syncing && (setSyncPwModal(false), setSyncPwError(""))}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="mtitle" style={{color:"#fff"}}>Sync All</div>
+            <div className="msub">Enter password to sync all accounts</div>
+            <div className="fg">
+              <label className="flbl">Password</label>
+              <input type="password" className="finput" value={syncPwInput} onChange={e => setSyncPwInput(e.target.value)} onKeyDown={e => e.key === "Enter" && confirmSyncPw()} placeholder="Password" autoFocus/>
+            </div>
+            {syncPwError && <div style={{color:"var(--red)",fontSize:11,marginBottom:8}}>{syncPwError}</div>}
+            <div className="macts">
+              <button className="ibtn" onClick={() => setSyncPwModal(false)}>Cancel</button>
+              <button className="ibtn primary" onClick={confirmSyncPw} disabled={!syncPwInput}>Sync</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

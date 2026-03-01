@@ -74,11 +74,17 @@ export async function fetchInstagramDirect(handle) {
   }
   if (followersCount == null) followersCount = 0;
 
-  const mediaRes = await fetch(
-    `${IG_API}/${userId}/media?fields=id,media_type,media_url,thumbnail_url,timestamp,caption,like_count,comments_count&limit=50&access_token=${token}`
-  );
-  const mediaData = await mediaRes.json();
-  const mediaList = mediaData.data || [];
+  // Paginate to fetch ALL posts (API returns max 50 per page)
+  const mediaList = [];
+  let nextUrl = `${IG_API}/${userId}/media?fields=id,media_type,media_url,thumbnail_url,timestamp,caption,like_count,comments_count&limit=50&access_token=${token}`;
+  while (nextUrl) {
+    const mediaRes = await fetch(nextUrl);
+    const mediaData = await mediaRes.json();
+    if (mediaData.error) throw new Error(mediaData.error.message || "Instagram media API error");
+    const chunk = mediaData.data || [];
+    mediaList.push(...chunk);
+    nextUrl = mediaData.paging?.next || null;
+  }
 
   // Videos/Reels have views in Insights; photos/carousels do not. Fetch views per video.
   const fetchViews = async (mediaId, mediaType) => {
@@ -97,7 +103,7 @@ export async function fetchInstagramDirect(handle) {
   };
 
   const postsWithViews = await Promise.all(
-    mediaList.slice(0, 50).map(async (m) => {
+    mediaList.map(async (m) => {
       const views = await fetchViews(m.id, m.media_type);
       return {
         id: m.id,

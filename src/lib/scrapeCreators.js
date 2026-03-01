@@ -56,13 +56,45 @@ function extractYTThumbnail(data) {
   return null;
 }
 
-export async function fetchYTChannel(apiKey, handle) {
-  const clean = handle.replace(/^@/, "");
-  const data = await sc("/v1/youtube/channel", { handle: clean }, apiKey);
+function extractHandleFromChannelUrl(channelUrl) {
+  if (!channelUrl || typeof channelUrl !== "string") return null;
+  const m = channelUrl.match(/@([a-zA-Z0-9_.@-]+)/);
+  return m ? m[1].replace(/\.$/, "") : null;
+}
+
+export async function fetchYTChannel(apiKey, handle, opts = {}) {
+  const { channelId: knownChannelId } = opts;
+  const clean = (handle || "").replace(/^@/, "").trim();
+  // ScrapeCreators: handle must NOT have @, and spaces cause 404. Try no-spaces first.
+  const noSpaces = clean.replace(/\s+/g, "");
+  const variants = [
+    knownChannelId && { channelId: knownChannelId },
+    noSpaces && { handle: noSpaces },
+    clean !== noSpaces && { handle: clean },
+    noSpaces && { url: `https://www.youtube.com/@${noSpaces}` },
+  ].filter(Boolean);
+  let data = null;
+  let lastErr = null;
+  for (const params of variants) {
+    try {
+      const res = await sc("/v1/youtube/channel", params, apiKey);
+      const id = res?.channelId ?? res?.channel_id ?? res?.id;
+      if (id) {
+        data = { ...res, channelId: id };
+        break;
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  const finalId = data?.channelId ?? data?.channel_id ?? data?.id;
+  if (!finalId) throw lastErr || new Error("Channel not found");
   const thumb = extractYTThumbnail(data);
+  const canonicalHandle = extractHandleFromChannelUrl(data.channel) || data.handle || clean;
   return {
-    id: data.channelId,
-    handle: (data.handle || clean).replace(/^@/, ""),
+    id: finalId,
+    handle: (canonicalHandle || clean).replace(/^@/, ""),
+    channelUrl: data.channel,
     title: data.name,
     subscribers: data.subscriberCount ?? 0,
     viewCount: data.viewCount ?? 0,
@@ -75,37 +107,85 @@ export async function fetchYTChannel(apiKey, handle) {
 }
 
 function mapYTVideo(v) {
+  const views = v.viewCountInt ?? v.viewCount ?? v.statistics?.viewCount ?? 0;
+  const likes = v.likeCountInt ?? v.likeCount ?? v.statistics?.likeCount ?? 0;
+  const comments = v.commentCountInt ?? v.commentCount ?? v.statistics?.commentCount ?? 0;
+  const thumb = v.thumbnail ?? v.thumbnails?.high?.url ?? v.thumbnails?.medium?.url ?? v.thumbnails?.default?.url;
+  const videoId = v.id || v.videoId;
+  const thumbResolved = typeof thumb === "string" ? thumb : thumb?.url;
   return {
-    id: v.id,
-    title: v.title,
-    url: v.url,
-    thumbnail: v.thumbnail,
-    views: v.viewCountInt ?? 0,
-    likes: v.likeCountInt ?? 0,
-    comments: v.commentCountInt ?? 0,
-    publishedAt: v.publishedTime || null,
-    duration: v.lengthSeconds ?? 0,
+    id: videoId,
+    title: v.title || v.name || v.snippet?.title || "(Untitled)",
+    url: v.url || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : null),
+    thumbnail: thumbResolved || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null),
+    views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
+    likes: typeof likes === "number" ? likes : parseInt(String(likes || 0), 10) || 0,
+    comments: typeof comments === "number" ? comments : parseInt(String(comments || 0), 10) || 0,
+    publishedAt: v.publishedTime || v.publishDate || v.publishedAt || v.snippet?.publishedAt || null,
+    duration: v.lengthSeconds ?? v.duration ?? v.contentDetails?.duration ?? 0,
     plat: "youtube",
   };
 }
 
 export async function fetchYTChannelVideos(apiKey, handle, opts = {}) {
-  const { fullFetch = false } = opts;
-  const clean = handle.replace(/^@/, "");
+  const { fullFetch = false, channelId = null, channelUrl = null, canonicalHandle = null } = opts;
+  const clean = (handle || "").replace(/^@/, "");
+  const handleToTry = (canonicalHandle || "").replace(/^@/, "") || clean;
   const all = [];
-  let token = null;
   const MAX_PAGES = fullFetch ? 150 : 1;
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const params = { handle: clean, sort: "latest" };
-    if (token) params.continuationToken = token;
-    const data = await sc("/v1/youtube/channel-videos", params, apiKey);
-    const list = data.videos || [];
-    if (!list.length) break;
-    all.push(...list.map(mapYTVideo));
-    const next = data.continuationToken;
-    if (!next || !fullFetch) break;
-    token = next;
+
+  // Prefer channelId first (most reliable), then handle, then url
+  const strategies = [];
+  if (channelId) strategies.push({ channelId });
+  if (handleToTry) strategies.push({ handle: handleToTry });
+  if (channelUrl) strategies.push({ url: channelUrl });
+  if (clean && clean !== handleToTry) strategies.push({ handle: clean });
+
+  for (const strategy of strategies) {
+    if (all.length > 0) break;
+    let token = null;
+    try {
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const params = { ...strategy, sort: "latest" };
+        if (token) params.continuationToken = token;
+        const data = await sc("/v1/youtube/channel-videos", params, apiKey);
+        const list = data.videos || data.items || data.results || data.data || [];
+        if (list.length) {
+          all.push(...list.map(mapYTVideo));
+          const next = data.continuationToken || data.nextPageToken;
+          if (!next || !fullFetch) break;
+          token = next;
+        } else break;
+      }
+    } catch (e) {
+      console.warn(`[YT videos] strategy ${JSON.stringify(strategy)} failed:`, e.message);
+    }
   }
+
+  // Also try channel shorts endpoint if we have few/no results
+  if (all.length < 5 && channelId) {
+    try {
+      const shortsData = await sc("/v1/youtube/channel/shorts", { channelId }, apiKey);
+      const shortsList = shortsData.shorts || shortsData.videos || shortsData.items || [];
+      if (shortsList.length) {
+        all.push(...shortsList.map(mapYTVideo));
+      }
+    } catch (e) {
+      console.warn("[YT shorts] failed:", e.message);
+    }
+  }
+  if (all.length < 5 && handleToTry && !channelId) {
+    try {
+      const shortsData = await sc("/v1/youtube/channel/shorts", { handle: handleToTry }, apiKey);
+      const shortsList = shortsData.shorts || shortsData.videos || shortsData.items || [];
+      if (shortsList.length) {
+        all.push(...shortsList.map(mapYTVideo));
+      }
+    } catch (e) {
+      console.warn("[YT shorts by handle] failed:", e.message);
+    }
+  }
+
   return all;
 }
 

@@ -72,10 +72,17 @@ Deno.serve(async (req) => {
           if (me.error) throw new Error(me.error.message);
           followers = me.followers_count ?? 0;
           videoCount = me.media_count ?? 0;
-          const mediaRes = await fetch(`${IG_API}/${me.id}/media?fields=id,media_type,like_count,comments_count&limit=50&access_token=${token}`);
-          const mediaData = await mediaRes.json();
-          const list = mediaData.data || [];
-          for (const m of list.slice(0, 25)) {
+          const mediaList: { id: string; media_type: string }[] = [];
+          let nextUrl: string | null = `${IG_API}/${me.id}/media?fields=id,media_type&limit=50&access_token=${token}`;
+          while (nextUrl) {
+            const mediaRes = await fetch(nextUrl);
+            const mediaData = await mediaRes.json();
+            if (mediaData.error) throw new Error(mediaData.error.message);
+            const chunk = mediaData.data || [];
+            mediaList.push(...chunk);
+            nextUrl = mediaData.paging?.next || null;
+          }
+          for (const m of mediaList) {
             if ((m.media_type || "").toUpperCase() === "VIDEO" || (m.media_type || "").toUpperCase() === "REELS") {
               try {
                 const ir = await fetch(`${IG_API}/${m.id}/insights?metric=views&access_token=${token}`);
@@ -96,9 +103,22 @@ Deno.serve(async (req) => {
             const s = ch.stats || {};
             followers = s.followerCount ?? 0;
             videoCount = s.videoCount ?? 0;
-            const vRes = await fetch(`${SC_BASE}/v3/tiktok/profile/videos?handle=${handle}&sort_by=latest`, { headers: { "x-api-key": scKey } });
-            const vData = await vRes.json();
-            const vlist = vData.aweme_list || vData.videos || [];
+            const vlist: any[] = [];
+            let ttcursor: string | null = null;
+            for (let p = 0; p < 100; p++) {
+              const vUrl = new URL(`${SC_BASE}/v3/tiktok/profile/videos`);
+              vUrl.searchParams.set("handle", handle);
+              vUrl.searchParams.set("sort_by", "latest");
+              if (ttcursor) vUrl.searchParams.set("max_cursor", ttcursor);
+              const vRes = await fetch(vUrl.toString(), { headers: { "x-api-key": scKey } });
+              const vData = await vRes.json();
+              const chunk = vData.aweme_list || vData.videos || [];
+              vlist.push(...chunk);
+              const hasMore = vData.has_more === 1 || vData.has_more === true;
+              const next = vData.max_cursor ?? vData.cursor;
+              if (!hasMore || !chunk.length || next === ttcursor) break;
+              ttcursor = next;
+            }
             totalViews = vlist.reduce((sum: number, v: any) => sum + ((v.statistics?.play_count ?? v.stats?.play_count ?? v.play_count ?? 0) || 0), 0);
           } else {
             followers = ch.subscriberCount ?? 0;
