@@ -827,6 +827,9 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                       </div>
                       <div className="pbody">
                         <div className="pcap">{p.cap}</div>
+                        <div style={{fontSize:9,color:"var(--text3)",marginBottom:4}}>
+                          {p.publishedAt ? new Date(p.publishedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                        </div>
                         <div className="pvbig">{fmtNum(p.views ?? 0)} views</div>
                         <div className="psr">
                           <div className="psr-left">
