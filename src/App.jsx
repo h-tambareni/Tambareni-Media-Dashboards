@@ -679,7 +679,12 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const hasChannelData = allChData.length > 0;
   const platOrder = ["tiktok", "instagram", "youtube"];
   const availablePlatforms = platOrder.filter(p => allChData.some(c => getPlat(c) === p));
-  const validTabs = ["all", "youtube", "tiktok", "instagram", ...availablePlatforms];
+  const brandPlatforms = platOrder.filter(p => allHandles.some(k => (pk(k).platform || "youtube") === p));
+  const isPlatformInactive = (p) => {
+    const ptHandles = allHandles.filter(k => (pk(k).platform || "youtube") === p);
+    return ptHandles.length > 0 && ptHandles.every(k => dbBrand.handleStatus?.[k] === false);
+  };
+  const validTabs = ["all", "youtube", "tiktok", "instagram", ...brandPlatforms];
   const [platTab, setPlatTab] = useState(() => {
     try {
       const raw = localStorage.getItem(`${BRAND_TAB_KEY}-${brandId}`);
@@ -687,7 +692,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     } catch {}
     return "all";
   });
-  const actualTab = availablePlatforms.includes(platTab) || platTab === "all" ? platTab : "all";
+  const actualTab = brandPlatforms.includes(platTab) || platTab === "all" ? platTab : "all";
   const setPlatTabPersist = useCallback((tab) => {
     setPlatTab(tab);
     try { localStorage.setItem(`${BRAND_TAB_KEY}-${brandId}`, tab); } catch {}
@@ -738,7 +743,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     }));
   })();
 
-  const tabs = [{ k: "all", label: "ALL" }, ...availablePlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p }))];
+  const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
 
   return (
     <div>
@@ -759,8 +764,8 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
         )}
         {hasChannelData && (
           <div className="tpill" style={{marginBottom:16}}>
-            {tabs.map(({ k, label }) => (
-              <button key={k} type="button" className={`tbtn ${actualTab === k ? "act" : ""}`} onClick={() => setPlatTabPersist(k)}>{label}</button>
+            {tabs.map(({ k, label, inactive }) => (
+              <button key={k} type="button" className={`tbtn ${actualTab === k ? "act" : ""} ${inactive ? "strike" : ""}`} style={inactive ? {textDecoration:"line-through",opacity:0.7} : undefined} onClick={() => setPlatTabPersist(k)}>{label}</button>
             ))}
           </div>
         )}
@@ -1279,21 +1284,29 @@ export default function App() {
           </div>
           <div className="nav-sec">
             <div className="nav-lbl">Brands</div>
-            {brands.map(b => {
-              const thumbs = getAllBrandThumbs(b, channelData);
-              const channelCount = b.handles.length;
-              return (
-                <div key={b.id} className={`brand-item${page==="brand"&&brandId===b.id?" act":""}`} onClick={() => go("brand", b.id)}>
-                  <Pfp srcs={thumbs} size={22} name={b.name}/>
-                  <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={b.name}>{b.name}</span>
-                  {channelCount > 1 && <span className="dbadge">{channelCount}</span>}
-                </div>
-              );
-            })}
+            {[...brands]
+              .sort((a, b) => {
+                const aAllInactive = a.handles?.length > 0 && a.handles.every(h => a.handleStatus?.[h] === false);
+                const bAllInactive = b.handles?.length > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
+                if (aAllInactive === bAllInactive) return 0;
+                return aAllInactive ? 1 : -1;
+              })
+              .map(b => {
+                const thumbs = getAllBrandThumbs(b, channelData);
+                const channelCount = b.handles.length;
+                const allInactive = channelCount > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
+                return (
+                  <div key={b.id} className={`brand-item${page==="brand"&&brandId===b.id?" act":""}${allInactive?" strike":""}`} onClick={() => go("brand", b.id)} style={allInactive ? {opacity:0.65} : undefined}>
+                    <Pfp srcs={thumbs} size={22} name={b.name}/>
+                    <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...(allInactive?{textDecoration:"line-through"}:{})}} title={b.name}>{b.name}</span>
+                    {channelCount > 1 && <span className="dbadge">{channelCount}</span>}
+                  </div>
+                );
+              })}
           </div>
           <div style={{marginTop:"auto",padding:"14px 18px",borderTop:"1px solid var(--border)"}}>
             <div style={{fontFamily:"DM Mono",fontSize:8,color:"#333",letterSpacing:2}}>
-              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Daily sync: 11:59 PM</span></>
+              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Daily sync: 11:59 PM PT</span></>
             </div>
           </div>
         </div>
