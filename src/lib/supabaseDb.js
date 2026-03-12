@@ -114,11 +114,14 @@ export async function removeChannelFromBrand(brandId, channelHandle, platform) {
 export async function toggleChannelActive(brandId, channelHandle, platform, active) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
   const h = norm(channelHandle) || channelHandle;
-  const handles = [...new Set([h, channelHandle].filter(Boolean))];
-  let q = supabase.from("brand_channels").update({ active }).eq("brand_id", brandId).in("channel_handle", handles);
-  if (platform) q = q.eq("platform", platform);
+  let q = supabase
+    .from("brand_channels")
+    .update({ active })
+    .eq("brand_id", brandId)
+    .eq("platform", platform || "youtube")
+    .ilike("channel_handle", h);
   const { error } = await q;
-  if (error) console.warn("toggleChannelActive failed (run migration 002):", error.message);
+  if (error) throw new Error(`Failed to update account status: ${error.message}`);
 }
 
 export async function updateBrandChannelYoutubeId(channelHandle, platform, youtubeChannelId) {

@@ -958,7 +958,7 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
                         <span className={`chip ${isActive ? (d ? "cg" : "ctt") : "cr"}`}>{isActive ? (d ? "ACTIVE" : "SYNC NEEDED") : "INACTIVE"}</span>
                       </div>
                       <div className="aacts">
-                        <button className="ibtn" title={isActive ? "Deactivate" : "Activate"} onClick={() => toggleActive(b.id, key, !isActive)} style={!isActive ? {color:"var(--green)",borderColor:"rgba(0,184,148,.3)"} : {}}>{isActive ? "⏸" : "▶"}</button>
+                        <button className="ibtn" title={isActive ? "Deactivate" : "Activate"} onClick={async () => { setSyncError(null); try { await toggleActive(b.id, key, !isActive); } catch (e) { setSyncError(e?.message || String(e)); } }} style={!isActive ? {color:"var(--green)",borderColor:"rgba(0,184,148,.3)"} : {}}>{isActive ? "⏸" : "▶"}</button>
                         {isActive && (
                           <button className="ibtn" title="Re-sync" disabled={resyncKey === key}
                             onClick={async () => {
@@ -1177,7 +1177,11 @@ export default function App() {
   const toggleActive = useCallback(async (brandId, key, active) => {
     const { handle, platform } = pk(key);
     if (isSupabaseConfigured()) await dbToggleChannelActive(brandId, handle, platform, active);
-    setBrands(prev => prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b));
+    setBrands(prev => {
+      const n = prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b);
+      if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(n)); } catch {}
+      return n;
+    });
   }, []);
 
   const LAST_REFRESH_KEY = "tambareni-last-refresh";
