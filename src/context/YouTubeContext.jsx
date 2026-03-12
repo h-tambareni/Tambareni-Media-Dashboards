@@ -11,7 +11,7 @@ import { fetchInstagramDirect, hasInstagramTokens } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
-  upsertChannelCache, deleteChannelCache, upsertDailySnapshot, fetchDailySnapshots,
+  upsertChannelCache, deleteChannelCache, fetchDailySnapshots,
   updateBrandChannelYoutubeId, ck,
 } from "../lib/supabaseDb";
 
@@ -80,11 +80,7 @@ export function YouTubeProvider({ children }) {
             setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
             if (isSupabaseConfigured()) {
               upsertChannelCache(compositeKey, entry).catch(() => {});
-              upsertDailySnapshot(handle, plat, {
-                totalViews: entry.totalViews,
-                followers: raw.channel?.subscribers ?? raw.platform?.followers ?? 0,
-                videoCount: raw.channel?.videoCount ?? raw.channel?.media_count ?? 0,
-              }).catch(() => {});
+              // Daily Growth chart uses only 11 PM ET snapshots from cron — no manual writes
             }
             return entry;
           } finally {
@@ -212,11 +208,7 @@ export function YouTubeProvider({ children }) {
           if (isSupabaseConfigured()) {
             upsertChannelCache(cacheKey, entry).catch(() => {});
             if (plat === "youtube" && ch?.id) updateBrandChannelYoutubeId(handle, plat, ch.id).catch(() => {});
-            upsertDailySnapshot(handle, plat, {
-              totalViews: totalV,
-              followers: ch.subscribers,
-              videoCount: ch.videoCount,
-            }).catch(() => {});
+            // Daily Growth chart uses only 11 PM ET snapshots from cron — no manual writes
           }
           return entry;
         } finally {

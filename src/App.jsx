@@ -247,6 +247,39 @@ const fmtNum = n => {
   return v.toLocaleString();
 };
 
+/** Fill missing days in daily growth data so the chart shows smooth daily points (no gaps). */
+function fillDailyGrowthGaps(sorted) {
+  if (!sorted?.length) return [];
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const byRaw = Object.fromEntries(sorted.map(r => [r.raw, r]));
+  let first = sorted[0].raw;
+  let last = sorted[sorted.length - 1].raw;
+  const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+  if (last < yesterday) last = yesterday;
+  const result = [];
+  let prevCum = 0;
+  const startMs = new Date(first + "T12:00:00Z").getTime();
+  const endMs = new Date(last + "T12:00:00Z").getTime();
+  const dayMs = 86400000;
+  for (let t = startMs; t <= endMs; t += dayMs) {
+    const d = new Date(t);
+    const raw = d.toISOString().slice(0, 10);
+    const existing = byRaw[raw];
+    const cumViews = existing ? existing.cumViews : prevCum;
+    result.push({
+      d: `${months[d.getMonth()]} ${d.getDate()}`,
+      raw,
+      cumViews,
+      views: 0,
+    });
+    prevCum = cumViews;
+  }
+  result.forEach((row, i) => {
+    row.views = i === 0 ? 0 : Math.max(0, row.cumViews - result[i - 1].cumViews);
+  });
+  return result;
+}
+
 const TTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -389,6 +422,8 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
   const allChannels = uniqueKeys.map(h => channelData[h]).filter(Boolean);
   const viewsData = (() => {
     const todayStr = new Date().toISOString().slice(0, 10);
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const fmtD = (raw) => { const d = new Date(raw + "T12:00:00Z"); return `${months[d.getMonth()]} ${d.getDate()}`; };
     const byDate = {};
     allChannels.forEach(ch => {
       (ch.dailyViews || []).forEach(row => {
@@ -404,14 +439,9 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
       const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
       prev.setDate(prev.getDate() - 1);
       const prevStr = prev.toISOString().slice(0, 10);
-      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const prevD = `${months[prev.getMonth()]} ${prev.getDate()}`;
-      sorted = [{ d: prevD, raw: prevStr, cumViews: 0 }, ...sorted];
+      sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
     }
-    return sorted.map((row, i) => ({
-      ...row,
-      views: i === 0 ? 0 : Math.max(0, row.cumViews - (sorted[i - 1].cumViews || 0)),
-    }));
+    return fillDailyGrowthGaps(sorted);
   })();
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
@@ -721,6 +751,8 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const dailyViewsRaw = chData.flatMap(c => c.dailyViews || []).filter(row => row.raw !== todayStr);
   const viewsData = (() => {
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const fmtD = (raw) => { const d = new Date(raw + "T12:00:00Z"); return `${months[d.getMonth()]} ${d.getDate()}`; };
     const byDate = {};
     dailyViewsRaw.forEach(row => {
       const key = row.raw || row.d;
@@ -733,14 +765,9 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
       const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
       prev.setDate(prev.getDate() - 1);
       const prevStr = prev.toISOString().slice(0, 10);
-      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const prevD = `${months[prev.getMonth()]} ${prev.getDate()}`;
-      sorted = [{ d: prevD, raw: prevStr, cumViews: 0 }, ...sorted];
+      sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
     }
-    return sorted.map((row, i) => ({
-      ...row,
-      views: i === 0 ? 0 : Math.max(0, row.cumViews - (sorted[i - 1].cumViews || 0)),
-    }));
+    return fillDailyGrowthGaps(sorted);
   })();
 
   const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
@@ -1313,7 +1340,7 @@ export default function App() {
           </div>
           <div style={{marginTop:"auto",padding:"14px 18px",borderTop:"1px solid var(--border)"}}>
             <div style={{fontFamily:"DM Mono",fontSize:8,color:"#333",letterSpacing:2}}>
-              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Daily sync: 11:59 PM PT</span></>
+              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Daily sync: 11 PM ET</span></>
             </div>
           </div>
         </div>

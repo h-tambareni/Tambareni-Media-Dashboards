@@ -57,15 +57,9 @@ The app uses [ScrapeCreators](https://docs.scrapecreators.com) for YouTube and T
 
 **Alternative:** Add `VITE_SCRAPECREATORS_API_KEY` to `.env` for direct client-side calls. The key will be visible in the browser.
 
-## Daily Growth Chart & 11:59 PM Auto-Sync
+## Daily Growth Chart & 11 PM ET Cron
 
-The **Daily Growth** chart uses `daily_snapshots` in Supabase. Each sync writes today's total views. You need multiple days of data for the chart to show growth.
-
-### In-browser auto-sync (when tab is open)
-
-- Checks every 15 seconds; triggers between 11:58 PM and 12:02 AM
-- Only runs when the dashboard tab is open
-- If the tab is closed, the sync will not run
+The **Daily Growth** chart uses `daily_snapshots` in Supabase. Data is written **only** by the 11 PM ET daily-sync cron—not by Sync All or manual syncs. This ensures a true 24-hour cadence for the chart.
 
 ### Server-side cron (Supabase native – no external tools)
 
