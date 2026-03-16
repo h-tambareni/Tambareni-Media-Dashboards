@@ -10,6 +10,7 @@ import {
   removeChannelFromBrand as dbRemoveChannelFromBrand,
   toggleChannelActive as dbToggleChannelActive,
   fetchLastSyncTime,
+  upsertLastManualSync,
   ck, pk,
 } from "./lib/supabaseDb";
 import { hasInstagramTokens, getInstagramHandles } from "./lib/instagramApi";
@@ -1212,7 +1213,16 @@ export default function App() {
   }, []);
 
   const LAST_REFRESH_KEY = "tambareni-last-refresh";
-  const [syncing, setSyncing] = useState(false);
+  const SYNC_IN_PROGRESS_KEY = "tambareni-sync-in-progress";
+  const SYNC_IN_PROGRESS_TTL = 5 * 60 * 1000; // 5 min
+  const [syncing, setSyncing] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SYNC_IN_PROGRESS_KEY);
+      if (!raw) return false;
+      const { startedAt } = JSON.parse(raw);
+      return Date.now() - startedAt < SYNC_IN_PROGRESS_TTL;
+    } catch { return false; }
+  });
   const [lastSync, setLastSync] = useState(() => {
     try {
       const s = localStorage.getItem(LAST_REFRESH_KEY);
@@ -1231,18 +1241,24 @@ export default function App() {
   useEffect(() => {
     refreshLastSync();
     const id = setInterval(refreshLastSync, 120000);
-    return () => clearInterval(id);
+    const onVisible = () => { if (document.visibilityState === "visible") refreshLastSync(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refreshLastSync]);
 
   const SYNC_PASSWORD = import.meta.env.VITE_SYNC_PASSWORD || "hi";
   const [syncPwModal, setSyncPwModal] = useState(false);
   const [syncPwInput, setSyncPwInput] = useState("");
   const [syncPwError, setSyncPwError] = useState("");
-  const doSyncAll = useCallback(async () => {
-    if (syncing) return;
+  const doSyncAll = useCallback(async (forceResume = false) => {
+    if (!forceResume && syncing) return;
     setSyncing(true);
     setSyncErrors([]);
     try {
+      try { localStorage.setItem(SYNC_IN_PROGRESS_KEY, JSON.stringify({ startedAt: Date.now() })); } catch {}
       const keys = [...new Set(brands.flatMap(b => b.handles.filter(key => b.handleStatus?.[key] !== false)))];
       const errs = [];
       for (const key of keys) {
@@ -1258,11 +1274,28 @@ export default function App() {
       const now = new Date();
       setLastSync(now);
       try { localStorage.setItem(LAST_REFRESH_KEY, now.toISOString()); } catch {}
-      if (isSupabaseConfigured()) refreshLastSync();
+      if (isSupabaseConfigured()) {
+        await upsertLastManualSync();
+        refreshLastSync();
+      }
     } finally {
       setSyncing(false);
+      try { localStorage.removeItem(SYNC_IN_PROGRESS_KEY); } catch {}
     }
   }, [brands, fetchChannel, syncing, refreshLastSync]);
+
+  const hasAttemptedResume = useRef(false);
+  useEffect(() => {
+    if (brandsLoading || hasAttemptedResume.current) return;
+    const raw = localStorage.getItem(SYNC_IN_PROGRESS_KEY);
+    if (!raw) return;
+    hasAttemptedResume.current = true;
+    try {
+      const { startedAt } = JSON.parse(raw);
+      if (Date.now() - startedAt < SYNC_IN_PROGRESS_TTL) doSyncAll(true);
+      else localStorage.removeItem(SYNC_IN_PROGRESS_KEY);
+    } catch { localStorage.removeItem(SYNC_IN_PROGRESS_KEY); }
+  }, [brandsLoading, doSyncAll]);
 
   const syncAll = useCallback(() => {
     setSyncPwModal(true);

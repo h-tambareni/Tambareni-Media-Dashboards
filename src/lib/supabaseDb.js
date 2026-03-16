@@ -214,13 +214,25 @@ export async function fetchDailySnapshots(channelHandle, platform, days = 90) {
   return data ?? [];
 }
 
+/** Stores when Sync All was last run (shared across devices). */
+export async function upsertLastManualSync() {
+  if (!isSupabaseConfigured()) return;
+  const now = new Date().toISOString();
+  await supabase.from("cron_config").upsert({ key: "last_manual_sync", value: now }, { onConflict: "key" });
+}
+
+/** Returns the most recent refresh time: max of 11 PM cron, Sync All timestamp, and channel_cache (when data was actually saved). */
 export async function fetchLastSyncTime() {
   if (!isSupabaseConfigured()) return null;
-  const { data } = await supabase
-    .from("daily_snapshots")
-    .select("created_at")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
-  return data?.created_at ? new Date(data.created_at) : null;
+  const [snapRes, manualRes, cacheRes] = await Promise.all([
+    supabase.from("daily_snapshots").select("created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("cron_config").select("value").eq("key", "last_manual_sync").maybeSingle(),
+    supabase.from("channel_cache").select("last_synced_at").order("last_synced_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const snapTime = snapRes.data?.created_at ? new Date(snapRes.data.created_at) : null;
+  const manualTime = manualRes.data?.value ? new Date(manualRes.data.value) : null;
+  const cacheTime = cacheRes.data?.last_synced_at ? new Date(cacheRes.data.last_synced_at) : null;
+  const times = [snapTime, manualTime, cacheTime].filter(Boolean);
+  if (!times.length) return null;
+  return new Date(Math.max(...times.map(d => d.getTime())));
 }
