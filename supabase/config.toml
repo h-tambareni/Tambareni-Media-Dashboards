@@ -6,3 +6,7 @@ verify_jwt = false
 # daily-sync: invoked by external cron at 11:59 PM – uses CRON_SECRET for auth
 [functions.daily-sync]
 verify_jwt = false
+
+# sync-all-batch: batch sync YouTube+TikTok – used by Sync All button
+[functions.sync-all-batch]
+verify_jwt = false

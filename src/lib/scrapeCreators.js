@@ -134,11 +134,10 @@ export async function fetchYTChannelVideos(apiKey, handle, opts = {}) {
   const all = [];
   const MAX_PAGES = fullFetch ? 150 : 1;
 
-  // Prefer channelId first (most reliable), then handle, then url
+  // Prefer channelId first (most reliable) - url param returns 400, skip it
   const strategies = [];
   if (channelId) strategies.push({ channelId });
   if (handleToTry) strategies.push({ handle: handleToTry });
-  if (channelUrl) strategies.push({ url: channelUrl });
   if (clean && clean !== handleToTry) strategies.push({ handle: clean });
 
   for (const strategy of strategies) {

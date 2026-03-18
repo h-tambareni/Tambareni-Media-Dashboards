@@ -12,7 +12,7 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
   upsertChannelCache, deleteChannelCache, fetchDailySnapshots,
-  updateBrandChannelYoutubeId, ck,
+  updateBrandChannelYoutubeId, ck, pk,
 } from "../lib/supabaseDb";
 
 const PlatformContext = createContext(null);
@@ -222,10 +222,69 @@ export function YouTubeProvider({ children }) {
     [apiKey]
   );
 
+  const fetchChannelBatch = useCallback(
+    async (items) => {
+      if (!isSupabaseConfigured()) throw new Error("Supabase required for batch sync");
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+      const res = await fetch(`${supabaseUrl}/functions/v1/sync-all-batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${anonKey}`,
+          "apikey": anonKey,
+        },
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Batch sync failed: ${res.status}`);
+      const results = data.results || [];
+      const successes = results.filter((r) => r.ok && r.entry);
+      const withDaily = await Promise.all(
+        successes.map(async (r) => {
+          const key = r.key;
+          let entry = r.entry;
+          if (isSupabaseConfigured()) {
+            const { handle, platform } = pk(key);
+            const dailyRows = await fetchDailySnapshots(handle, platform);
+            entry = {
+              ...entry,
+              dailyViews: dailyRows.map((row) => ({
+                d: formatChartDate(row.snapshot_date),
+                raw: row.snapshot_date,
+                views: row.total_views,
+              })),
+            };
+          }
+          return { key, entry };
+        })
+      );
+      setChannels((prev) => {
+        const next = { ...prev };
+        for (const { key, entry } of withDaily) next[key] = entry;
+        return next;
+      });
+      setConnectedHandles((prev) => {
+        const added = withDaily.map((x) => x.key).filter((k) => !prev.includes(k));
+        return added.length ? [...prev, ...added] : prev;
+      });
+      for (const { key, entry } of withDaily) {
+        upsertChannelCache(key, entry).catch(() => {});
+        if (entry.channel?.platform === "youtube" && entry.channel?.id) {
+          const { handle, platform } = pk(key);
+          updateBrandChannelYoutubeId(handle, platform, entry.channel.id).catch(() => {});
+        }
+      }
+      return results;
+    },
+    []
+  );
+
   const value = {
     apiKey: !!apiKey || isSupabaseConfigured(),
     instagramConfigured: hasInstagramTokens(),
     fetchChannel,
+    fetchChannelBatch,
     removeChannel,
     channelData: channels,
     connectedHandles,

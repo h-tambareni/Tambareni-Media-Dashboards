@@ -31,6 +31,13 @@ const css = `
   --mono: 'DM Mono', monospace; --sans: 'DM Sans', sans-serif; --display: 'Bebas Neue', sans-serif;
 }
 .app { font-family: var(--sans); background: var(--bg); min-height: 100vh; color: var(--text); display: flex; font-size: 14px; }
+/* Sleek dark scrollbars */
+.app, .app .sidebar, .app .main, .app .page, .app .bgrid, .app .panel, .app .page-fit { scrollbar-width: thin; scrollbar-color: #333 var(--surface); }
+.app ::-webkit-scrollbar, .app .sidebar::-webkit-scrollbar, .app .main::-webkit-scrollbar { width: 6px; height: 6px; }
+.app ::-webkit-scrollbar-track { background: var(--surface); }
+.app ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+.app ::-webkit-scrollbar-thumb:hover { background: #444; }
+.app ::-webkit-scrollbar-thumb:active { background: #555; }
 .sidebar { width: 216px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .logo-area { padding: 22px 18px 18px; border-bottom: 1px solid var(--border); }
 .logo-text { font-family: var(--display); font-size: 28px; letter-spacing: 3px; line-height: 1.2; color: var(--text); cursor: default; user-select: none; }
@@ -229,12 +236,20 @@ const css = `
   .ptab { font-size: 10px; padding: 8px 14px; white-space: nowrap; }
   .alert-txt { font-size: 11px; }
 }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { border:2px solid transparent; border-top-color:currentColor; border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
+.sync-loading { display:inline-flex; align-items:center; gap:6px; }
 @media (min-width: 769px) {
   .mobile-menu-btn { display: none; }
   .mobile-topbar { display: none; }
   .sidebar-overlay { display: none; }
 }
 `;
+
+function Spinner({ size = 14 }) {
+  const bw = size <= 12 ? 1.5 : 2;
+  return <span className="spinner" style={{ width: size, height: size, borderWidth: bw }} />;
+}
 
 const fmt = n => {
   if (typeof n === "string") return n;
@@ -408,7 +423,7 @@ function getAllBrandThumbs(brand, channelData) {
   return urls;
 }
 
-function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, lastSync, syncErrors, onAccounts }) {
+function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, syncProgress, syncElapsed, lastSync, syncErrors, onAccounts }) {
   const { channelData } = useYouTubeContext();
 
   const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles))];
@@ -483,8 +498,22 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, last
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
       <div className="topbar">
         <span className="topbar-title">SOCIAL MEDIA ANALYTICS</span>
-        <div className="tr">
-          <button className="ibtn primary" disabled={syncing} onClick={syncAll}>{syncing ? "SYNCING…" : "⟳ SYNC ALL"}</button>
+        <div className="tr" style={{ alignItems: "center", gap: 12 }}>
+          {syncing && (
+            <>
+              {syncProgress.total > 0 && (
+                <div className="sync-progress" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 140 }}>
+                  <div className="sync-progress-bar-wrap" style={{ flex: 1, height: 6, background: "rgba(255,255,255,0.2)", borderRadius: 3, overflow: "hidden" }}>
+                    <div className="sync-progress-bar" style={{ height: "100%", width: `${(syncProgress.completed / syncProgress.total) * 100}%`, background: "var(--accent,#4a9eff)", borderRadius: 3, transition: "width 0.2s" }} />
+                  </div>
+                  <span style={{ fontSize: 11, whiteSpace: "nowrap" }}>{Math.round((syncProgress.completed / syncProgress.total) * 100)}%</span>
+                  <span style={{ fontSize: 11, opacity: 0.9 }}>{syncProgress.completed} / {syncProgress.total} accounts</span>
+                </div>
+              )}
+              <span style={{ fontSize: 11, fontVariantNumeric: "tabular-nums", opacity: 0.9 }}>{Math.floor(syncElapsed / 60)}:{(syncElapsed % 60).toString().padStart(2, "0")}</span>
+            </>
+          )}
+          <button className="ibtn primary" disabled={syncing} onClick={syncAll}>{syncing ? <span className="sync-loading"><Spinner/> SYNCING…</span> : "⟳ SYNC ALL"}</button>
           <button className="ibtn" onClick={onAccounts}>Accounts</button>
         </div>
       </div>
@@ -693,7 +722,7 @@ function BrandResyncButton({ dbBrand, platTab, fetchChannel, onAccounts }) {
   };
   return (
     <>
-      <button type="button" className="ibtn primary" disabled={loading} onClick={doResync}>{loading ? "Syncing…" : "⟳ Re-sync videos"}</button>
+      <button type="button" className="ibtn primary" disabled={loading} onClick={doResync}>{loading ? <span className="sync-loading"><Spinner/> Syncing…</span> : "⟳ Re-sync videos"}</button>
       {err && <div style={{marginTop:8,color:"var(--red)",fontSize:11}}>{err}</div>}
     </>
   );
@@ -910,8 +939,9 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
   const { apiKey, instagramConfigured, fetchChannel, channelData } = useYouTubeContext();
 
   const handleSync = async (targetBrandId) => {
-    if (!syncHandle.trim() || !targetBrandId) return;
-    if (syncPlatform !== "instagram" && !apiKey) return;
+    if (!syncHandle.trim()) { setSyncError("Please enter a handle"); return; }
+    if (!targetBrandId) { setSyncError("Please select a brand"); return; }
+    if (syncPlatform !== "instagram" && !apiKey) { setSyncError("API key required for YouTube and TikTok"); return; }
     setSyncLoading(true); setSyncError(null);
     try {
       const entry = await fetchChannel(syncHandle.trim(), syncPlatform, true);
@@ -1000,7 +1030,7 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
                                 setResyncKey(null);
                               }
                             }}>
-                            {resyncKey === key ? "…" : "⟳"}
+                            {resyncKey === key ? <Spinner size={10} /> : "⟳"}
                           </button>
                         )}
                         <button className="ibtn danger" onClick={async () => { removeChannel(key); await removeHandleFromBrand(b.id, rawHandle, rawPlat); }}>✕</button>
@@ -1059,7 +1089,7 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
             {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
             <div className="macts">
               <button className="ibtn" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
-              <button className="ibtn primary" disabled={!apiKey || syncLoading || !syncBrandId} onClick={() => handleSync(syncBrandId)}>{syncLoading ? "Syncing…" : "ADD ACCOUNT"}</button>
+              <button className="ibtn primary" disabled={!apiKey || syncLoading} onClick={() => handleSync(syncBrandId)}>{syncLoading ? <span className="sync-loading"><Spinner/> Syncing…</span> : "ADD ACCOUNT"}</button>
             </div>
           </div>
         </div>
@@ -1079,7 +1109,7 @@ export default function App() {
   const [brands, setBrands] = useState(loadBrandsLocal);
   const [brandsLoading, setBrandsLoading] = useState(isSupabaseConfigured());
   const [channelMeta, setChannelMeta] = useState({});
-  const { connectedHandles, channelData, removeChannel, fetchChannel } = useYouTubeContext();
+  const { connectedHandles, channelData, removeChannel, fetchChannel, fetchChannelBatch } = useYouTubeContext();
 
   const page = nav.page;
   const brandId = nav.brandId;
@@ -1231,6 +1261,9 @@ export default function App() {
     } catch { return null; }
   });
   const [syncErrors, setSyncErrors] = useState([]);
+  const [syncProgress, setSyncProgress] = useState({ completed: 0, total: 0 });
+  const [syncElapsed, setSyncElapsed] = useState(0);
+  const syncStartRef = useRef(0);
 
   const refreshLastSync = useCallback(async () => {
     if (!isSupabaseConfigured()) return;
@@ -1257,19 +1290,73 @@ export default function App() {
     if (!forceResume && syncing) return;
     setSyncing(true);
     setSyncErrors([]);
+    setSyncElapsed(0);
+    syncStartRef.current = Date.now();
     try {
       try { localStorage.setItem(SYNC_IN_PROGRESS_KEY, JSON.stringify({ startedAt: Date.now() })); } catch {}
       const keys = [...new Set(brands.flatMap(b => b.handles.filter(key => b.handleStatus?.[key] !== false)))];
+      const total = keys.length;
+      setSyncProgress({ completed: 0, total });
       const errs = [];
-      for (const key of keys) {
+      const scKeys = keys.filter((k) => {
+        const p = (pk(k).platform || "youtube").toLowerCase();
+        return p === "youtube" || p === "tiktok";
+      });
+      const igKeys = keys.filter((k) => (pk(k).platform || "youtube").toLowerCase() === "instagram");
+
+      if (scKeys.length > 0 && isSupabaseConfigured()) {
+        try {
+          const items = scKeys.map((key) => {
+            const { handle, platform } = pk(key);
+            const meta = channelMeta?.[key];
+            return {
+              handle,
+              platform,
+              youtubeChannelId: meta?.youtubeChannelId || null,
+            };
+          });
+          const results = await fetchChannelBatch(items);
+          setSyncProgress({ completed: scKeys.length, total });
+          for (const r of results) {
+            if (!r.ok) errs.push({ key: r.key, msg: r.error || "Unknown error" });
+          }
+        } catch (batchErr) {
+          for (let i = 0; i < scKeys.length; i++) {
+            const key = scKeys[i];
+            const { handle, platform } = pk(key);
+            try {
+              await fetchChannel(handle, platform, true, true);
+            } catch (e) {
+              errs.push({ key, msg: e?.message || String(e) });
+            }
+            setSyncProgress({ completed: i + 1, total });
+          }
+        }
+      } else if (scKeys.length > 0) {
+        for (let i = 0; i < scKeys.length; i++) {
+          const key = scKeys[i];
+          const { handle, platform } = pk(key);
+          try {
+            await fetchChannel(handle, platform, true, true);
+          } catch (e) {
+            errs.push({ key, msg: e?.message || String(e) });
+          }
+          setSyncProgress({ completed: i + 1, total });
+        }
+      }
+
+      for (let i = 0; i < igKeys.length; i++) {
+        const key = igKeys[i];
         const { handle, platform } = pk(key);
         try {
           await fetchChannel(handle, platform, true, true);
         } catch (e) {
           errs.push({ key, msg: e?.message || String(e) });
         }
-        await new Promise(r => setTimeout(r, 1500));
+        setSyncProgress({ completed: scKeys.length + i + 1, total });
       }
+
+      setSyncProgress({ completed: total, total });
       setSyncErrors(errs);
       const now = new Date();
       setLastSync(now);
@@ -1280,9 +1367,19 @@ export default function App() {
       }
     } finally {
       setSyncing(false);
+      setSyncProgress({ completed: 0, total: 0 });
+      setSyncElapsed(0);
       try { localStorage.removeItem(SYNC_IN_PROGRESS_KEY); } catch {}
     }
-  }, [brands, fetchChannel, syncing, refreshLastSync]);
+  }, [brands, channelMeta, fetchChannel, fetchChannelBatch, syncing, refreshLastSync]);
+
+  useEffect(() => {
+    if (!syncing) return;
+    const id = setInterval(() => {
+      setSyncElapsed(Math.floor((Date.now() - syncStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [syncing]);
 
   const hasAttemptedResume = useRef(false);
   useEffect(() => {
@@ -1360,13 +1457,13 @@ export default function App() {
               })
               .map(b => {
                 const thumbs = getAllBrandThumbs(b, channelData);
-                const channelCount = b.handles.length;
-                const allInactive = channelCount > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
+                const activeCount = b.handles?.filter(h => b.handleStatus?.[h] !== false).length ?? 0;
+                const allInactive = (b.handles?.length ?? 0) > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
                 return (
                   <div key={b.id} className={`brand-item${page==="brand"&&brandId===b.id?" act":""}${allInactive?" strike":""}`} onClick={() => go("brand", b.id)} style={allInactive ? {opacity:0.65} : undefined}>
                     <Pfp srcs={thumbs} size={22} name={b.name}/>
                     <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...(allInactive?{textDecoration:"line-through"}:{})}} title={b.name}>{b.name}</span>
-                    {channelCount > 1 && <span className="dbadge">{channelCount}</span>}
+                    {activeCount > 0 && <span className="dbadge">{activeCount}</span>}
                   </div>
                 );
               })}
@@ -1387,7 +1484,7 @@ export default function App() {
             </div>
             <span className="mobile-topbar-title">{pageTitle}</span>
           </div>
-          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")}/>}
+          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} syncProgress={syncProgress} syncElapsed={syncElapsed} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")}/>}
           {page === "matchmax" && (
             <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
               <div className="topbar">
@@ -1414,7 +1511,7 @@ export default function App() {
             {syncPwError && <div style={{color:"var(--red)",fontSize:11,marginBottom:8}}>{syncPwError}</div>}
             <div className="macts">
               <button className="ibtn" onClick={() => setSyncPwModal(false)}>Cancel</button>
-              <button className="ibtn primary" onClick={confirmSyncPw} disabled={!syncPwInput}>Sync</button>
+              <button className="ibtn primary" onClick={confirmSyncPw} disabled={!syncPwInput || syncing}>{syncing ? <span className="sync-loading"><Spinner/> Syncing…</span> : "Sync"}</button>
             </div>
           </div>
         </div>
