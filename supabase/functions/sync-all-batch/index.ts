@@ -1,5 +1,5 @@
 /**
- * Batch sync – fetches YouTube + TikTok channel + videos for multiple handles in one request.
+ * Batch sync – fetches YouTube, TikTok, and Instagram channel + videos for multiple handles in one request.
  * Client makes one HTTP call; server fans out to ScrapeCreators in parallel.
  */
 const SC_BASE = "https://api.scrapecreators.com";
@@ -19,11 +19,11 @@ Deno.serve(async (req) => {
     const filtered = items.filter((i) => {
       const p = (i.platform || "youtube").toLowerCase();
       const h = (i.handle || "").trim().replace(/^@/, "");
-      return (p === "youtube" || p === "tiktok") && h;
+      return (p === "youtube" || p === "tiktok" || p === "instagram") && h;
     });
 
     if (!filtered.length) {
-      return Response.json({ results: [], error: "No youtube/tiktok handles provided" }, { headers: { ...cors } });
+      return Response.json({ results: [], error: "No youtube/tiktok/instagram handles provided" }, { headers: { ...cors } });
     }
 
     const results = await Promise.all(
@@ -246,6 +246,77 @@ async function fetchTTProfileVideos(apiKey: string, handle: string, opts: { full
   return all;
 }
 
+// ─── Instagram ────────────────────────────────────────────────────────────
+
+async function fetchIGProfile(apiKey: string, handle: string): Promise<any> {
+  const clean = (handle || "").replace(/^@/, "").trim();
+  const raw = await sc("/v1/instagram/profile", { handle: clean }, apiKey);
+  const data = raw?.data || raw;
+  const user = data?.user || data;
+  const followedBy = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
+  const mediaCount = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
+  const followers = typeof followedBy === "number" ? followedBy : (followedBy?.count ?? 0);
+  const videoCount = typeof mediaCount === "number" ? mediaCount : (mediaCount?.count ?? 0);
+  return {
+    id: user?.id,
+    handle: (user?.username || clean).replace(/^@/, ""),
+    title: user?.full_name || user?.username || handle,
+    subscribers: followers,
+    videoCount,
+    viewCount: 0,
+    thumbnail: user?.profile_pic_url_hd || user?.profile_pic_url || null,
+    bio: user?.biography,
+    platform: "instagram",
+  };
+}
+
+function mapIGPost(item: any, _handle: string): any {
+  const base = item?.node || item;
+  const views = base?.video_view_count ?? base?.play_count ?? base?.ig_play_count ?? 0;
+  const cap = base?.caption;
+  const caption = (typeof cap === "string" ? cap : cap?.text ?? "") || (base?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "").slice(0, 200);
+  const commentCount = base?.edge_media_to_comment?.count ?? base?.comment_count ?? 0;
+  const likeCount = base?.edge_liked_by?.count ?? base?.like_count ?? 0;
+  const shortcode = base?.code ?? base?.shortcode;
+  return {
+    id: base?.id ?? base?.pk ?? base?.strong_id__ ?? shortcode,
+    title: caption || "(Untitled)",
+    url: shortcode ? `https://www.instagram.com/p/${shortcode}/` : null,
+    thumbnail: base?.display_uri ?? base?.display_url ?? base?.thumbnail_src,
+    views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
+    likes: typeof likeCount === "number" ? likeCount : parseInt(String(likeCount || 0), 10) || 0,
+    comments: typeof commentCount === "number" ? commentCount : parseInt(String(commentCount || 0), 10) || 0,
+    shares: 0,
+    publishedAt: (base?.taken_at ?? base?.taken_at_timestamp) ? new Date((base.taken_at ?? base.taken_at_timestamp) * 1000).toISOString() : null,
+    duration: 0,
+    plat: "instagram",
+  };
+}
+
+async function fetchIGPosts(apiKey: string, handle: string, opts: { fullFetch: boolean }): Promise<any[]> {
+  const { fullFetch } = opts;
+  const clean = (handle || "").replace(/^@/, "");
+  const all: any[] = [];
+  let maxId: string | null = null;
+  const MAX_PAGES = fullFetch ? 50 : 1;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params: Record<string, string> = { handle: clean };
+    if (maxId) params.next_max_id = maxId;
+    const data = await sc("/v2/instagram/user/posts", params, apiKey);
+    const list = data?.items || data?.data || [];
+    if (list.length) {
+      for (const item of list) {
+        const mapped = mapIGPost(item, clean);
+        if (mapped.id) all.push(mapped);
+      }
+    }
+    if (!fullFetch || !data?.more_available || !list.length) break;
+    maxId = data?.next_max_id ?? data?.cursor ?? null;
+    if (!maxId) break;
+  }
+  return all;
+}
+
 // ─── Sync one channel ─────────────────────────────────────────────────────
 
 async function syncOne(
@@ -263,6 +334,9 @@ async function syncOne(
     if (platform === "tiktok") {
       ch = await fetchTTProfile(apiKey, handle);
       videos = await fetchTTProfileVideos(apiKey, ch.handle || handle, { fullFetch: true, userId: ch.id });
+    } else if (platform === "instagram") {
+      ch = await fetchIGProfile(apiKey, handle);
+      videos = await fetchIGPosts(apiKey, ch.handle || handle, { fullFetch: true });
     } else {
       ch = await fetchYTChannel(apiKey, handle, { channelId: item.youtubeChannelId });
       videos = await fetchYTChannelVideos(apiKey, handle, {
@@ -279,8 +353,8 @@ async function syncOne(
       likes: v.likes ?? 0,
       cmts: v.comments ?? 0,
       shares: v.shares ?? 0,
-      plat: platform === "tiktok" ? "tt" : "yt",
-      emoji: platform === "tiktok" ? "🎵" : "▶️",
+      plat: platform === "tiktok" ? "tt" : platform === "instagram" ? "ig" : "yt",
+      emoji: platform === "tiktok" ? "🎵" : platform === "instagram" ? "📷" : "▶️",
       thumbnail: v.thumbnail,
       publishedAt: v.publishedAt,
     }));

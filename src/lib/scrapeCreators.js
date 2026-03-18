@@ -1,5 +1,5 @@
 /**
- * ScrapeCreators API wrapper for YouTube + TikTok
+ * ScrapeCreators API wrapper for YouTube, TikTok, and Instagram
  * Docs: https://docs.scrapecreators.com
  * When apiKey is null/empty and Supabase is configured, uses Edge Function proxy (keeps key server-side)
  */
@@ -261,6 +261,77 @@ export async function fetchTTProfileVideos(apiKey, handle, opts = {}) {
     if (!hasMore || !list.length) break;
     if (next === cursor) break;
     cursor = next;
+  }
+  return all;
+}
+
+// ─── Instagram ──────────────────────────────────────────────────────────────
+
+export async function fetchIGProfile(apiKey, handle) {
+  const clean = (handle || "").replace(/^@/, "").trim();
+  const raw = await sc("/v1/instagram/profile", { handle: clean }, apiKey);
+  const data = raw?.data || raw;
+  const user = data?.user || data;
+  const followedBy = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
+  const mediaCount = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
+  const followers = typeof followedBy === "number" ? followedBy : (followedBy?.count ?? 0);
+  const videoCount = typeof mediaCount === "number" ? mediaCount : (mediaCount?.count ?? 0);
+  const thumb = user?.profile_pic_url_hd || user?.profile_pic_url || user?.hd_profile_pic_url_info?.url || data?.profile_pic_url || null;
+  return {
+    id: user?.id,
+    handle: (user?.username || clean).replace(/^@/, ""),
+    title: user?.full_name || user?.username || handle,
+    subscribers: followers,
+    videoCount,
+    thumbnail: thumb,
+    bio: user?.biography,
+    platform: "instagram",
+  };
+}
+
+function mapIGPost(item, handle) {
+  const base = item?.node || item;
+  const views = base?.video_view_count ?? base?.play_count ?? base?.ig_play_count ?? 0;
+  const cap = base?.caption;
+  const caption = (typeof cap === "string" ? cap : cap?.text ?? "") || (base?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "").slice(0, 200);
+  const commentCount = base?.edge_media_to_comment?.count ?? base?.comment_count ?? 0;
+  const likeCount = base?.edge_liked_by?.count ?? base?.like_count ?? 0;
+  const shortcode = base?.code ?? base?.shortcode;
+  return {
+    id: base?.id ?? base?.pk ?? base?.strong_id__ ?? shortcode,
+    title: caption || "(Untitled)",
+    url: shortcode ? `https://www.instagram.com/p/${shortcode}/` : null,
+    thumbnail: base?.display_uri ?? base?.display_url ?? base?.thumbnail_src,
+    views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
+    likes: typeof likeCount === "number" ? likeCount : parseInt(String(likeCount || 0), 10) || 0,
+    comments: typeof commentCount === "number" ? commentCount : parseInt(String(commentCount || 0), 10) || 0,
+    shares: 0,
+    publishedAt: (base?.taken_at ?? base?.taken_at_timestamp) ? new Date((base.taken_at ?? base.taken_at_timestamp) * 1000).toISOString() : null,
+    duration: 0,
+    plat: "instagram",
+  };
+}
+
+export async function fetchIGPosts(apiKey, handle, opts = {}) {
+  const { fullFetch = false } = opts;
+  const clean = (handle || "").replace(/^@/, "");
+  const all = [];
+  let maxId = null;
+  const MAX_PAGES = fullFetch ? 50 : 1;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = { handle: clean };
+    if (maxId) params.next_max_id = maxId;
+    const data = await sc("/v2/instagram/user/posts", params, apiKey);
+    const list = data?.items || data?.data || [];
+    if (list.length) {
+      for (const item of list) {
+        const mapped = mapIGPost(item, clean);
+        if (mapped.id) all.push(mapped);
+      }
+    }
+    if (!fullFetch || !data?.more_available || !list.length) break;
+    maxId = data?.next_max_id ?? data?.cursor ?? null;
+    if (!maxId) break;
   }
   return all;
 }

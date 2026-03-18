@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { isSupabaseConfigured } from "./lib/supabase";
+import { getInstagramToken } from "./lib/instagramApi";
 import {
   fetchBrandsWithChannels,
   createBrand as dbCreateBrand,
@@ -13,7 +14,6 @@ import {
   upsertLastManualSync,
   ck, pk,
 } from "./lib/supabaseDb";
-import { hasInstagramTokens, getInstagramHandles } from "./lib/instagramApi";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
 
@@ -407,11 +407,17 @@ function RollingNumber({ value, spinning, format = "full", magnitude }) {
   );
 }
 
+function proxyImageUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  if (!/cdninstagram|fbcdn\.net|scontent/i.test(url)) return url;
+  return `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
+}
+
 function getChannelThumbs(d) {
   const urls = [];
   const seen = new Set();
-  [d?.platform?.thumbnail, d?.channel?.thumbnail].forEach(t => { if (t && !seen.has(t)) { urls.push(t); seen.add(t); } });
-  (d?.posts || []).slice(0, 2).forEach(p => { if (p?.thumbnail && !seen.has(p.thumbnail)) { urls.push(p.thumbnail); seen.add(p.thumbnail); } });
+  [d?.platform?.thumbnail, d?.channel?.thumbnail].forEach(t => { if (t && !seen.has(t)) { urls.push(proxyImageUrl(t)); seen.add(t); } });
+  (d?.posts || []).slice(0, 2).forEach(p => { if (p?.thumbnail && !seen.has(p.thumbnail)) { urls.push(proxyImageUrl(p.thumbnail)); seen.add(p.thumbnail); } });
   return urls;
 }
 function getAllBrandThumbs(brand, channelData) {
@@ -936,26 +942,40 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
   const [syncBrandId, setSyncBrandId] = useState(null);
   const [newBrandName, setNewBrandName] = useState("");
   const [resyncKey, setResyncKey] = useState(null);
-  const { apiKey, instagramConfigured, fetchChannel, channelData } = useYouTubeContext();
+  const syncCancelledRef = useRef(false);
+  const { apiKey, fetchChannel, channelData } = useYouTubeContext();
+
+  const cancelAddAccount = () => {
+    syncCancelledRef.current = true;
+    setSyncLoading(false);
+    setModal(null);
+    setSyncHandle("");
+    setSyncBrandId(null);
+    setSyncError(null);
+  };
 
   const handleSync = async (targetBrandId) => {
     if (!syncHandle.trim()) { setSyncError("Please enter a handle"); return; }
     if (!targetBrandId) { setSyncError("Please select a brand"); return; }
-    if (syncPlatform !== "instagram" && !apiKey) { setSyncError("API key required for YouTube and TikTok"); return; }
+    if (syncPlatform !== "instagram" && !apiKey) { setSyncError("API key required for YouTube and TikTok."); return; }
+    if (syncPlatform === "instagram" && !getInstagramToken(syncHandle.trim()) && !apiKey) { setSyncError("For new Instagram accounts, API key required. Configure Supabase or set VITE_SCRAPECREATORS_API_KEY."); return; }
+    syncCancelledRef.current = false;
     setSyncLoading(true); setSyncError(null);
     try {
       const entry = await fetchChannel(syncHandle.trim(), syncPlatform, true);
+      if (syncCancelledRef.current) return;
       const rawHandle = entry?.channel?.handle || entry?.platform?.handle || entry?.channel?.title;
       const ytChannelId = entry?.channel?.id || null;
       if (rawHandle) {
         await addHandleToBrand(targetBrandId, rawHandle, syncPlatform, ytChannelId);
+        if (syncCancelledRef.current) return;
         setSyncHandle("");
         setSyncBrandId(null);
         setSyncError(null);
         setModal(null);
       }
-    } catch (e) { setSyncError(e.message); }
-    setSyncLoading(false);
+    } catch (e) { if (!syncCancelledRef.current) setSyncError(e.message); }
+    finally { setSyncLoading(false); }
   };
 
 
@@ -974,7 +994,7 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
       <div className="page">
         <div style={{marginBottom:24}}>
           <div className="stitle">CONNECTED ACCOUNTS</div>
-          <div className="sdesc">Add brands first, then add YouTube or TikTok accounts via + ADD ACCOUNT.</div>
+          <div className="sdesc">Add brands first, then add YouTube, TikTok, or Instagram accounts via + ADD ACCOUNT.</div>
           {syncError && (
             <div className="alert" style={{marginBottom:12}}>
               <span className="alert-txt">{syncError}</span>
@@ -1061,10 +1081,10 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
       )}
 
       {modal === "account" && (
-        <div className="ovrl" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>
+        <div className="ovrl" onClick={syncLoading ? cancelAddAccount : () => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="mtitle">ADD ACCOUNT</div>
-            <div className="msub">Add a YouTube or TikTok account. Select a brand to assign it to.</div>
+            <div className="msub">Add a YouTube, TikTok, or Instagram account. Select a brand to assign it to.</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:12}}>
               <span className={`chip ${apiKey?"cig":"ctt"}`}>{apiKey ? "API KEY OK" : "NO API KEY"}</span>
             </div>
@@ -1073,11 +1093,12 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
               <select className="fselect" value={syncPlatform} onChange={e => { setSyncPlatform(e.target.value); setSyncError(null); }} style={{width:"100%"}}>
                 <option value="youtube">YouTube</option>
                 <option value="tiktok">TikTok</option>
+                <option value="instagram">Instagram</option>
               </select>
             </div>
             <div className="fg">
               <label className="flbl">Handle</label>
-              <input className="finput" placeholder={syncPlatform === "tiktok" ? "e.g. charlidamelio" : "e.g. @RawTruth.Podcast"} value={syncHandle} onChange={e => { setSyncHandle(e.target.value); setSyncError(null); }} style={{width:"100%"}}/>
+              <input className="finput" placeholder={syncPlatform === "tiktok" ? "e.g. charlidamelio" : syncPlatform === "instagram" ? "e.g. rawtruthpodcast" : "e.g. @RawTruth.Podcast"} value={syncHandle} onChange={e => { setSyncHandle(e.target.value); setSyncError(null); }} style={{width:"100%"}}/>
             </div>
             <div className="fg">
               <label className="flbl">Brand</label>
@@ -1088,8 +1109,8 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
             </div>
             {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
             <div className="macts">
-              <button className="ibtn" onClick={() => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
-              <button className="ibtn primary" disabled={!apiKey || syncLoading} onClick={() => handleSync(syncBrandId)}>{syncLoading ? <span className="sync-loading"><Spinner/> Syncing…</span> : "ADD ACCOUNT"}</button>
+              <button className="ibtn" onClick={syncLoading ? cancelAddAccount : () => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
+              <button className="ibtn primary" disabled={(syncPlatform !== "instagram" ? !apiKey : !apiKey && !getInstagramToken(syncHandle.trim())) || syncLoading} onClick={() => handleSync(syncBrandId)}>{syncLoading ? <span className="sync-loading"><Spinner/> Syncing…</span> : "ADD ACCOUNT"}</button>
             </div>
           </div>
         </div>
@@ -1154,64 +1175,6 @@ export default function App() {
   }, []);
 
   // When Supabase is configured, DB is source of truth for which brands have which channels.
-  // Only fetch Instagram data for handles already in brands – don't auto-add from .env.
-  const igAutoAdded = useRef(false);
-  useEffect(() => {
-    if (brandsLoading || igAutoAdded.current || !brands.length) return;
-    if (isSupabaseConfigured()) {
-      igAutoAdded.current = true;
-      const igKeys = brands.flatMap(b => b.handles).filter(k => (pk(k).platform || "youtube") === "instagram");
-      igKeys.forEach(key => { const { handle, platform } = pk(key); fetchChannel(handle, platform).catch(() => {}); });
-      return;
-    }
-    const igHandles = getInstagramHandles();
-    if (!igHandles.length) return;
-    igAutoAdded.current = true;
-    igHandles.forEach(async (handle) => {
-      const key = ck(handle, "instagram");
-      const alreadyAdded = brands.some(b => b.handles.includes(key));
-      if (alreadyAdded) {
-        fetchChannel(handle, "instagram").catch(() => {});
-        return;
-      }
-      const matchBrand = brands.find(b =>
-        b.name.toLowerCase().replace(/[^a-z0-9]/g, "").includes(handle.toLowerCase().replace(/[^a-z0-9]/g, ""))
-        || handle.toLowerCase().replace(/[^a-z0-9]/g, "").includes(b.name.toLowerCase().replace(/[^a-z0-9]/g, ""))
-      ) || brands[0];
-      if (matchBrand) {
-        await addHandleToBrand(matchBrand.id, handle, "instagram").catch(() => {});
-        fetchChannel(handle, "instagram").catch(() => {});
-      }
-    });
-  }, [brands, brandsLoading, fetchChannel, addHandleToBrand]);
-
-  const handledInstagramReturn = useRef(false);
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const ig = params.get("instagram");
-    if (ig && isSupabaseConfigured() && !handledInstagramReturn.current) {
-      handledInstagramReturn.current = true;
-      const isPopup = !!window.opener;
-      if (isPopup && window.opener) {
-        window.opener.location.href = `${window.location.origin}${window.location.pathname}?instagram=${ig}${params.get("brandId") ? `&brandId=${params.get("brandId")}` : ""}`;
-        window.close();
-        return;
-      }
-      window.history.replaceState({}, "", window.location.pathname);
-      fetchBrandsWithChannels()
-        .then(res => {
-          setBrands(res.brands ?? []);
-          const keys = [...new Set((res.brands ?? []).flatMap(b => b.handles))];
-          return Promise.all(keys.map(key => {
-            const { handle, platform } = pk(key);
-            return fetchChannel(handle, platform).catch(() => null);
-          }));
-        })
-        .then(() => { if (ig === "success") go("settings"); })
-        .catch(() => {});
-    }
-  }, [fetchChannel]);
-
   const addBrand = useCallback(async (name) => {
     const b = { id: crypto.randomUUID(), name: name || "New Brand", color: "#d63031", handles: [] };
     if (isSupabaseConfigured()) { const row = await dbCreateBrand({ name: b.name, color: b.color }); b.id = row.id; }
@@ -1298,15 +1261,20 @@ export default function App() {
       const total = keys.length;
       setSyncProgress({ completed: 0, total });
       const errs = [];
-      const scKeys = keys.filter((k) => {
+      const allScKeys = keys.filter((k) => {
         const p = (pk(k).platform || "youtube").toLowerCase();
-        return p === "youtube" || p === "tiktok";
+        return p === "youtube" || p === "tiktok" || p === "instagram";
       });
-      const igKeys = keys.filter((k) => (pk(k).platform || "youtube").toLowerCase() === "instagram");
+      const legacyIgKeys = allScKeys.filter((k) => {
+        if ((pk(k).platform || "").toLowerCase() !== "instagram") return false;
+        const { handle } = pk(k);
+        return channelMeta?.[k]?.hasLegacyInstagramToken || !!getInstagramToken(handle);
+      });
+      const batchKeys = allScKeys.filter((k) => !legacyIgKeys.includes(k));
 
-      if (scKeys.length > 0 && isSupabaseConfigured()) {
+      if (batchKeys.length > 0 && isSupabaseConfigured()) {
         try {
-          const items = scKeys.map((key) => {
+          const items = batchKeys.map((key) => {
             const { handle, platform } = pk(key);
             const meta = channelMeta?.[key];
             return {
@@ -1316,13 +1284,13 @@ export default function App() {
             };
           });
           const results = await fetchChannelBatch(items);
-          setSyncProgress({ completed: scKeys.length, total });
+          setSyncProgress({ completed: batchKeys.length, total });
           for (const r of results) {
             if (!r.ok) errs.push({ key: r.key, msg: r.error || "Unknown error" });
           }
         } catch (batchErr) {
-          for (let i = 0; i < scKeys.length; i++) {
-            const key = scKeys[i];
+          for (let i = 0; i < batchKeys.length; i++) {
+            const key = batchKeys[i];
             const { handle, platform } = pk(key);
             try {
               await fetchChannel(handle, platform, true, true);
@@ -1332,28 +1300,28 @@ export default function App() {
             setSyncProgress({ completed: i + 1, total });
           }
         }
-      } else if (scKeys.length > 0) {
-        for (let i = 0; i < scKeys.length; i++) {
-          const key = scKeys[i];
+      } else if (batchKeys.length > 0) {
+        for (let i = 0; i < batchKeys.length; i++) {
+          const key = batchKeys[i];
           const { handle, platform } = pk(key);
           try {
             await fetchChannel(handle, platform, true, true);
           } catch (e) {
             errs.push({ key, msg: e?.message || String(e) });
           }
-          setSyncProgress({ completed: i + 1, total });
+            setSyncProgress({ completed: i + 1, total });
         }
       }
 
-      for (let i = 0; i < igKeys.length; i++) {
-        const key = igKeys[i];
+      for (let i = 0; i < legacyIgKeys.length; i++) {
+        const key = legacyIgKeys[i];
         const { handle, platform } = pk(key);
         try {
           await fetchChannel(handle, platform, true, true);
         } catch (e) {
           errs.push({ key, msg: e?.message || String(e) });
         }
-        setSyncProgress({ completed: scKeys.length + i + 1, total });
+        setSyncProgress({ completed: batchKeys.length + i + 1, total });
       }
 
       setSyncProgress({ completed: total, total });

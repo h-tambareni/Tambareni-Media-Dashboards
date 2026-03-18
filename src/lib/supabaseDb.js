@@ -25,11 +25,11 @@ export async function fetchBrandsWithChannels() {
   let channelsData;
   const { data: d1, error: e1 } = await supabase
     .from("brand_channels")
-    .select("brand_id, channel_handle, platform, youtube_channel_id, active");
+    .select("brand_id, channel_handle, platform, youtube_channel_id, active, instagram_access_token");
   if (e1) {
     const { data: d2, error: e2 } = await supabase
       .from("brand_channels")
-      .select("brand_id, channel_handle, platform, youtube_channel_id");
+      .select("brand_id, channel_handle, platform, youtube_channel_id, instagram_access_token");
     if (e2) throw e2;
     channelsData = d2;
   } else {
@@ -48,6 +48,7 @@ export async function fetchBrandsWithChannels() {
       platform: plat,
       youtubeChannelId: row.youtube_channel_id,
       active: row.active !== false,
+      hasLegacyInstagramToken: plat === "instagram" && !!(row.instagram_access_token || "").trim(),
     };
     if (plat === "youtube" && !row.youtube_channel_id) ytKeysNeedingCache.push(key);
   });
@@ -141,7 +142,9 @@ export async function getCachedChannel(channelHandle) {
   return data;
 }
 
-/** Try composite key first, then legacy raw handle (normalized). Validates platform match for legacy. */
+const normForMatch = (h) => (h || "").toString().toLowerCase().replace(/^@/, "").replace(/\./g, "");
+
+/** Try composite key first, then legacy raw handle (normalized). For Instagram, also try alternate handle variants (dots). */
 export async function getCachedChannelWithFallback(handle, platform) {
   if (!isSupabaseConfigured()) return null;
   const composite = ck(handle, platform);
@@ -153,9 +156,20 @@ export async function getCachedChannelWithFallback(handle, platform) {
     const { data: leg2 } = await supabase.from("channel_cache").select("*").eq("channel_handle", handle).maybeSingle();
     legacy = leg2;
   }
-  if (!legacy?.raw_platform_json) return null;
-  const plat = legacy.raw_platform_json?.platform?.platformType || legacy.raw_platform_json?.channel?.platform;
-  return plat === platform ? legacy : null;
+  if (legacy?.raw_platform_json) {
+    const plat = legacy.raw_platform_json?.platform?.platformType || legacy.raw_platform_json?.channel?.platform;
+    if (plat === platform) return legacy;
+  }
+  if (platform === "instagram") {
+    const { data: allIg } = await supabase.from("channel_cache").select("*").like("channel_handle", "%::instagram");
+    const ourNorm = normForMatch(handle);
+    const hit = (allIg || []).find((r) => {
+      const prefix = (r.channel_handle || "").split("::")[0];
+      return prefix && normForMatch(prefix) === ourNorm;
+    });
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export function isCacheFresh(cached, ttlHours = CACHE_TTL_HOURS) {

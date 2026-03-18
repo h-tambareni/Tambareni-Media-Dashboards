@@ -23,12 +23,6 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
     const scKey = (Deno.env.get("SCRAPECREATORS_API_KEY") || "").trim();
 
-    // Prefer cron_config (DB) over INSTAGRAM_TOKENS env – DB wins so you can fix tokens without redeploying
-    let igTokensRaw = "";
-    const { data: igRow } = await supabase.from("cron_config").select("value").eq("key", "instagram_tokens").single();
-    if (igRow?.value) igTokensRaw = String(igRow.value).trim();
-    if (!igTokensRaw) igTokensRaw = (Deno.env.get("INSTAGRAM_TOKENS") || "").trim();
-
     if (!scKey) {
       return Response.json({ error: "SCRAPECREATORS_API_KEY not set" }, { status: 500, headers: cors });
     }
@@ -37,59 +31,91 @@ Deno.serve(async (req) => {
 
     const { data: channels } = await supabase
       .from("brand_channels")
-      .select("channel_handle, platform")
+      .select("channel_handle, platform, instagram_access_token")
       .or("active.is.null,active.eq.true");
-    const unique = new Map<string, { handle: string; platform: string }>();
-    (channels || []).forEach((r) => {
+    const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string }>();
+    (channels || []).forEach((r: any) => {
       const h = (r.channel_handle || "").trim().toLowerCase().replace(/^@/, "");
       const p = r.platform || "youtube";
-      if (h) unique.set(`${h}::${p}`, { handle: h, platform: p });
+      if (h) unique.set(`${h}::${p}`, {
+        handle: h,
+        platform: p,
+        instagramAccessToken: (r.instagram_access_token || "").trim() || undefined,
+      });
     });
-
-    const igMap: Record<string, string> = {};
+    let igTokensRaw = "";
+    const { data: igRow } = await supabase.from("cron_config").select("value").eq("key", "instagram_tokens").single();
+    if (igRow?.value) igTokensRaw = String(igRow.value).trim();
+    if (!igTokensRaw) igTokensRaw = (Deno.env.get("INSTAGRAM_TOKENS") || "").trim();
+    const igTokenMap: Record<string, string> = {};
     igTokensRaw.split(",").forEach((pair) => {
       const sep = pair.indexOf(":");
       if (sep > 0) {
-        const handle = pair.slice(0, sep).trim().toLowerCase().replace(/^@/, "");
-        const token = pair.slice(sep + 1).trim();
-        if (handle && token) igMap[handle] = token;
+        const h = pair.slice(0, sep).trim().toLowerCase().replace(/^@/, "");
+        const t = pair.slice(sep + 1).trim();
+        if (h && t) igTokenMap[h] = t;
       }
     });
 
     const results: { key: string; ok: boolean; err?: string }[] = [];
 
-    for (const { handle, platform } of unique.values()) {
+    for (const { handle, platform, instagramAccessToken } of unique.values()) {
       try {
         let totalViews = 0;
         let followers = 0;
         let videoCount = 0;
 
         if (platform === "instagram") {
-          const token = igMap[handle] || Object.values(igMap)[0];
-          if (!token) { results.push({ key: `${handle}::instagram`, ok: false, err: "No token" }); continue; }
-          const meRes = await fetch(`${IG_API}/me?fields=id,username,followers_count,media_count&access_token=${token}`);
-          const me = await meRes.json();
-          if (me.error) throw new Error(me.error.message);
-          followers = me.followers_count ?? 0;
-          videoCount = me.media_count ?? 0;
-          const mediaList: { id: string; media_type: string }[] = [];
-          let nextUrl: string | null = `${IG_API}/${me.id}/media?fields=id,media_type&limit=50&access_token=${token}`;
-          while (nextUrl) {
-            const mediaRes = await fetch(nextUrl);
-            const mediaData = await mediaRes.json();
-            if (mediaData.error) throw new Error(mediaData.error.message);
-            const chunk = mediaData.data || [];
-            mediaList.push(...chunk);
-            nextUrl = mediaData.paging?.next || null;
-          }
-          for (const m of mediaList) {
-            if ((m.media_type || "").toUpperCase() === "VIDEO" || (m.media_type || "").toUpperCase() === "REELS") {
-              try {
-                const ir = await fetch(`${IG_API}/${m.id}/insights?metric=views&access_token=${token}`);
-                const ij = await ir.json();
-                const v = ij?.data?.[0]?.values?.[0]?.value ?? ij?.data?.[0]?.total_value?.value;
-                if (typeof v === "number") totalViews += v;
-              } catch {}
+          const token = instagramAccessToken || igTokenMap[handle] || Object.values(igTokenMap)[0];
+          if (token) {
+            const meRes = await fetch(`${IG_API}/me?fields=id,username,followers_count,media_count&access_token=${token}`);
+            const me = await meRes.json();
+            if (me.error) throw new Error(me.error.message);
+            followers = me.followers_count ?? 0;
+            videoCount = me.media_count ?? 0;
+            let nextUrl: string | null = `${IG_API}/${me.id}/media?fields=id,media_type&limit=50&access_token=${token}`;
+            while (nextUrl) {
+              const mediaRes = await fetch(nextUrl);
+              const mediaData = await mediaRes.json();
+              if (mediaData.error) throw new Error(mediaData.error.message);
+              const chunk = mediaData.data || [];
+              for (const m of chunk) {
+                if ((m.media_type || "").toUpperCase() === "VIDEO" || (m.media_type || "").toUpperCase() === "REELS") {
+                  try {
+                    const ir = await fetch(`${IG_API}/${m.id}/insights?metric=views&access_token=${token}`);
+                    const ij = await ir.json();
+                    const v = ij?.data?.[0]?.values?.[0]?.value ?? ij?.data?.[0]?.total_value?.value;
+                    if (typeof v === "number") totalViews += v;
+                  } catch {}
+                }
+              }
+              nextUrl = mediaData.paging?.next || null;
+            }
+          } else {
+            const profRes = await fetch(`${SC_BASE}/v1/instagram/profile?handle=${encodeURIComponent(handle)}`, { headers: { "x-api-key": scKey } });
+            const profData = await profRes.json();
+            if (!profRes.ok) throw new Error(profData?.message || "API error");
+            const user = profData?.data?.user || profData?.user || profData;
+            const fb = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
+            const mc = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
+            followers = typeof fb === "number" ? fb : (fb?.count ?? 0);
+            videoCount = typeof mc === "number" ? mc : (mc?.count ?? 0);
+            let maxId: string | null = null;
+            for (let p = 0; p < 30; p++) {
+              const postsUrl = new URL(`${SC_BASE}/v2/instagram/user/posts`);
+              postsUrl.searchParams.set("handle", handle);
+              if (maxId) postsUrl.searchParams.set("next_max_id", maxId);
+              const postsRes = await fetch(postsUrl.toString(), { headers: { "x-api-key": scKey } });
+              const postsData = await postsRes.json();
+              if (!postsRes.ok) break;
+              const items = postsData?.items || postsData?.data || [];
+              for (const it of items) {
+                const b = it?.node || it;
+                totalViews += b?.play_count ?? b?.ig_play_count ?? b?.video_view_count ?? 0;
+              }
+              if (!postsData?.more_available || !items.length) break;
+              maxId = postsData?.next_max_id ?? postsData?.cursor ?? null;
+              if (!maxId) break;
             }
           }
         } else {
