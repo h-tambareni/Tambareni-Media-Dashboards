@@ -7,6 +7,19 @@ const SC_BASE = "https://api.scrapecreators.com";
 const IG_API = "https://graph.instagram.com/v25.0";
 const cors = { "Access-Control-Allow-Origin": "*" };
 
+/** DB `active` must be treated as inactive only when explicitly false (boolean or legacy string). */
+function isChannelRowActive(active: unknown): boolean {
+  if (active === false) return false;
+  if (active === true) return true;
+  if (active === null || active === undefined) return true;
+  if (typeof active === "string") {
+    const s = active.trim().toLowerCase();
+    if (s === "false" || s === "0" || s === "f") return false;
+    if (s === "true" || s === "1" || s === "t") return true;
+  }
+  return true;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
@@ -29,11 +42,12 @@ Deno.serve(async (req) => {
 
     const today = new Date().toISOString().slice(0, 10);
 
-    const { data: channels } = await supabase
+    const { data: channelsRaw } = await supabase
       .from("brand_channels")
-      .select("channel_handle, platform, instagram_access_token")
-      .or("active.is.null,active.eq.true");
-    const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string }>();
+      .select("channel_handle, platform, instagram_access_token, instagram_user_id, active");
+    // Never sync deactivated accounts (.or() alone can miss edge cases; inactive must never run).
+    const channels = (channelsRaw || []).filter((r: { active?: unknown }) => isChannelRowActive(r.active));
+    const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string; instagramUserId?: string }>();
     (channels || []).forEach((r: any) => {
       const h = (r.channel_handle || "").trim().toLowerCase().replace(/^@/, "");
       const p = r.platform || "youtube";
@@ -41,6 +55,7 @@ Deno.serve(async (req) => {
         handle: h,
         platform: p,
         instagramAccessToken: (r.instagram_access_token || "").trim() || undefined,
+        instagramUserId: (r.instagram_user_id || "").trim() || undefined,
       });
     });
     let igTokensRaw = "";
@@ -59,37 +74,54 @@ Deno.serve(async (req) => {
 
     const results: { key: string; ok: boolean; err?: string }[] = [];
 
-    for (const { handle, platform, instagramAccessToken } of unique.values()) {
+    for (const { handle, platform, instagramAccessToken, instagramUserId } of unique.values()) {
       try {
         let totalViews = 0;
         let followers = 0;
         let videoCount = 0;
 
         if (platform === "instagram") {
-          const token = instagramAccessToken || igTokenMap[handle] || Object.values(igTokenMap)[0];
+          // Never use "first token in map" for a different handle — that wrote the SAME /me metrics under every row (wrong numbers + duplicates).
+          const token = instagramAccessToken || igTokenMap[handle];
+          let me: { id?: string; username?: string; followers_count?: number; media_count?: number; error?: { message?: string } } | null = null;
           if (token) {
-            const meRes = await fetch(`${IG_API}/me?fields=id,username,followers_count,media_count&access_token=${token}`);
-            const me = await meRes.json();
-            if (me.error) throw new Error(me.error.message);
+            const meRes = await fetch(
+              `${IG_API}/me?fields=id,username,followers_count,media_count&access_token=${token}`,
+            );
+            me = await meRes.json();
+          }
+          const tokenMatchesHandle =
+            me &&
+            !me.error &&
+            (
+              (instagramUserId && String(me.id) === String(instagramUserId)) ||
+              (me.username || "").trim().toLowerCase().replace(/^@/, "") === handle
+            );
+
+          if (tokenMatchesHandle && me?.id) {
+            // Must match instagram-fetch: first page of media, insights on first 25 items (same totalViews as dashboard KPI).
             followers = me.followers_count ?? 0;
             videoCount = me.media_count ?? 0;
-            let nextUrl: string | null = `${IG_API}/${me.id}/media?fields=id,media_type&limit=50&access_token=${token}`;
-            while (nextUrl) {
-              const mediaRes = await fetch(nextUrl);
-              const mediaData = await mediaRes.json();
-              if (mediaData.error) throw new Error(mediaData.error.message);
-              const chunk = mediaData.data || [];
-              for (const m of chunk) {
-                if ((m.media_type || "").toUpperCase() === "VIDEO" || (m.media_type || "").toUpperCase() === "REELS") {
-                  try {
-                    const ir = await fetch(`${IG_API}/${m.id}/insights?metric=views&access_token=${token}`);
-                    const ij = await ir.json();
-                    const v = ij?.data?.[0]?.values?.[0]?.value ?? ij?.data?.[0]?.total_value?.value;
-                    if (typeof v === "number") totalViews += v;
-                  } catch {}
-                }
-              }
-              nextUrl = mediaData.paging?.next || null;
+            const userId = me.id;
+            const mediaRes = await fetch(
+              `${IG_API}/${userId}/media?fields=id,media_type&limit=50&access_token=${token}`,
+            );
+            const mediaData = await mediaRes.json();
+            if (mediaData.error) throw new Error(mediaData.error.message);
+            const mediaList = mediaData.data || [];
+            for (const m of mediaList.slice(0, 25)) {
+              const mt = (m.media_type || "").toUpperCase();
+              const metrics =
+                mt === "VIDEO" || mt === "REELS" ? "views,likes,comments" : "likes,comments";
+              try {
+                const insRes = await fetch(`${IG_API}/${m.id}/insights?metric=${metrics}&access_token=${token}`);
+                const insData = await insRes.json();
+                const byName: Record<string, number> = {};
+                (insData.data || []).forEach((d: { name: string; values: { value: string }[] }) => {
+                  byName[d.name] = parseInt(d.values?.[0]?.value || "0", 10);
+                });
+                totalViews += byName.views ?? 0;
+              } catch {}
             }
           } else {
             const profRes = await fetch(`${SC_BASE}/v1/instagram/profile?handle=${encodeURIComponent(handle)}`, { headers: { "x-api-key": scKey } });

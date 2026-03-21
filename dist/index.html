@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/jpeg" href="/tm-logo-icon.jpg" />
     <title>Tambareni Media Analytics</title>
-    <script type="module" crossorigin src="/assets/index-BF0KDIX1.js"></script>
+    <script type="module" crossorigin src="/assets/index-GDbTKD4t.js"></script>
   </head>
   <body>
     <div id="root"></div>
@@ -14,8 +14,13 @@
         document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Error</h2><pre>' + (e.message || e) + '</pre></div>';
       });
       window.addEventListener('unhandledrejection', function(e) {
-        document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Promise Error</h2><pre>' + (e.reason?.message || e.reason) + '</pre></div>';
+        var msg = (e.reason && (e.reason.message || e.reason)) || '';
+        if (/metamask|wallet|ethereum|phantom|connect.*wallet/i.test(String(msg))) {
+          console.warn('Ignored extension error:', msg);
+          return;
+        }
+        document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Promise Error</h2><pre>' + msg + '</pre></div>';
       });
-    </script>
+    </script>
   </body>
 </html>

@@ -11,12 +11,20 @@ import { fetchInstagramDirect, getInstagramToken } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
-  upsertChannelCache, deleteChannelCache, fetchDailySnapshots,
+  upsertChannelCache, deleteChannelCache, fetchDailySnapshots, upsertDailySnapshot,
   updateBrandChannelYoutubeId, ck, pk,
 } from "../lib/supabaseDb";
 
 const PlatformContext = createContext(null);
 const inFlight = new Map();
+
+function snapshotFieldsFromEntry(entry) {
+  return {
+    totalViews: entry.totalViews ?? 0,
+    followers: entry.platform?.followers ?? entry.channel?.subscribers ?? 0,
+    videoCount: entry.channel?.videoCount ?? entry.posts?.length ?? 0,
+  };
+}
 
 export function YouTubeProvider({ children }) {
   const apiKey = import.meta.env.VITE_SCRAPECREATORS_API_KEY || "";
@@ -130,6 +138,8 @@ export function YouTubeProvider({ children }) {
             if (entry) {
               let dailyViews = [];
               if (isSupabaseConfigured()) {
+                const hSnap = entry?.channel?.handle || entry?.platform?.handle || handle;
+                await upsertDailySnapshot(hSnap, plat, snapshotFieldsFromEntry(entry)).catch(() => {});
                 dailyViews = (await fetchDailySnapshots(handle, plat)).map(row => ({
                   d: formatChartDate(row.snapshot_date),
                   raw: row.snapshot_date,
@@ -212,8 +222,15 @@ export function YouTubeProvider({ children }) {
             platformType: plat,
           };
 
+          const pendingForSnapshot = {
+            channel: ch,
+            platform: platformData,
+            posts,
+            totalViews: totalV,
+          };
           let dailyViews = [];
           if (isSupabaseConfigured()) {
+            await upsertDailySnapshot(ch?.handle || handle, plat, snapshotFieldsFromEntry(pendingForSnapshot)).catch(() => {});
             dailyViews = (await fetchDailySnapshots(handle, plat)).map(row => ({
               d: formatChartDate(row.snapshot_date),
               raw: row.snapshot_date,
@@ -222,10 +239,7 @@ export function YouTubeProvider({ children }) {
           }
 
           entry = {
-            channel: ch,
-            platform: platformData,
-            posts,
-            totalViews: totalV,
+            ...pendingForSnapshot,
             dailyViews,
             last_full_fetch_at: needsFullFetch ? new Date().toISOString() : (cachedSnap?.last_full_fetch_at || null),
           };
@@ -238,7 +252,6 @@ export function YouTubeProvider({ children }) {
             const canonicalKey = ck(canonicalHandle, plat);
             upsertChannelCache(canonicalKey, entry).catch(() => {});
             if (plat === "youtube" && ch?.id) updateBrandChannelYoutubeId(handle, plat, ch.id).catch(() => {});
-            // Daily Growth chart uses only 11 PM ET snapshots from cron — no manual writes
           }
           return entry;
         } finally {
@@ -276,6 +289,7 @@ export function YouTubeProvider({ children }) {
           let entry = r.entry;
           if (isSupabaseConfigured()) {
             const { handle, platform } = pk(key);
+            await upsertDailySnapshot(handle, platform, snapshotFieldsFromEntry(entry)).catch(() => {});
             const dailyRows = await fetchDailySnapshots(handle, platform);
             entry = {
               ...entry,

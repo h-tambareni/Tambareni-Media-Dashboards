@@ -92,7 +92,7 @@ export async function deleteBrand(id) {
 
 export async function addChannelToBrand(brandId, channelHandle, platform = "youtube", youtubeChannelId = null) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const h = (channelHandle || "").trim().replace(/^@/, "");
+  const h = norm(channelHandle);
   const { data, error } = await supabase
     .from("brand_channels")
     .insert({ brand_id: brandId, channel_handle: h, platform, youtube_channel_id: youtubeChannelId })
@@ -114,15 +114,23 @@ export async function removeChannelFromBrand(brandId, channelHandle, platform) {
 
 export async function toggleChannelActive(brandId, channelHandle, platform, active) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const h = norm(channelHandle) || channelHandle;
-  let q = supabase
+  const nh = norm(channelHandle);
+  const trimmed = (channelHandle || "").trim().replace(/^@/, "");
+  // Match DB row whether it was stored lowercased or legacy casing; avoid .ilike() — _ and % are LIKE wildcards.
+  const candidates = [...new Set([nh, trimmed, trimmed.toLowerCase()].filter(Boolean))];
+  const { data: updated, error } = await supabase
     .from("brand_channels")
     .update({ active })
     .eq("brand_id", brandId)
     .eq("platform", platform || "youtube")
-    .ilike("channel_handle", h);
-  const { error } = await q;
+    .in("channel_handle", candidates)
+    .select("id");
   if (error) throw new Error(`Failed to update account status: ${error.message}`);
+  if (!updated?.length) {
+    throw new Error(
+      "No matching account row was updated. Try removing and re-adding the account, or check channel handle in the database.",
+    );
+  }
 }
 
 export async function updateBrandChannelYoutubeId(channelHandle, platform, youtubeChannelId) {
@@ -205,8 +213,9 @@ export async function upsertChannelCache(channelHandle, snapshot) {
 export async function upsertDailySnapshot(channelHandle, platform, { totalViews, followers, videoCount }) {
   if (!isSupabaseConfigured()) return;
   const today = new Date().toISOString().slice(0, 10);
+  const h = norm(channelHandle);
   await supabase.from("daily_snapshots").upsert({
-    channel_handle: channelHandle,
+    channel_handle: h,
     platform,
     snapshot_date: today,
     total_views: totalViews ?? 0,
@@ -218,10 +227,11 @@ export async function upsertDailySnapshot(channelHandle, platform, { totalViews,
 export async function fetchDailySnapshots(channelHandle, platform, days = 90) {
   if (!isSupabaseConfigured()) return [];
   const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const h = norm(channelHandle);
   const { data } = await supabase
     .from("daily_snapshots")
     .select("snapshot_date, total_views, followers")
-    .eq("channel_handle", channelHandle)
+    .eq("channel_handle", h)
     .eq("platform", platform)
     .gte("snapshot_date", since)
     .order("snapshot_date", { ascending: true });

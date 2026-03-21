@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine } from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { getInstagramToken } from "./lib/instagramApi";
@@ -292,17 +292,22 @@ function usePrefersReducedMotion() {
  */
 function channelDailyGrowthFromSnapshots(rows) {
   const sorted = (rows || []).slice().sort((a, b) => (a.raw || a.d || "").localeCompare(b.raw || b.d || ""));
+  const maxCum = sorted.reduce((m, r) => Math.max(m, r.views || 0), 0);
   const out = [];
   sorted.forEach((row, i) => {
     const prevRow = i > 0 ? sorted[i - 1] : null;
     const prevCum = prevRow ? (prevRow.views || 0) : 0;
     const currCum = row.views || 0;
     let dailyGrowth = prevRow ? Math.max(0, currCum - prevCum) : 0;
+    // Placeholder zeros then a real cumulative → not "one day" of traffic (baseline / backfill).
+    if (prevRow && prevCum <= 0 && currCum > 0) dailyGrowth = 0;
     if (prevRow && prevCum > 0 && currCum >= prevCum) {
       const ratio = currCum / prevCum;
       if (ratio > 25 && prevCum < 2_000_000) dailyGrowth = 0;
       else if (dailyGrowth > 5_000_000 && prevCum < 500_000) dailyGrowth = 0;
     }
+    // One day cannot plausibly add most of lifetime cumulative views.
+    if (maxCum > 50_000 && dailyGrowth > maxCum * 0.45) dailyGrowth = 0;
     out.push({ row, dailyGrowth });
   });
   return out;
@@ -334,10 +339,91 @@ function clipAggregateDailySpikes(byDate) {
   }
 }
 
+/** Concise axis label: M/D without leading zeros (e.g. 3/14). */
+function formatAxisDateShort(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  const parts = raw.slice(0, 10).split("-");
+  if (parts.length < 3) return raw;
+  const m = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+  if (!m || !day) return raw;
+  return `${m}/${day}`;
+}
+
+/** YYYY-MM-DD: dotted vertical line at this day (to the right = reliable 24h snapshots). VITE_RELIABLE_SNAPSHOTS_SINCE=none hides the line. */
+const RELIABLE_SNAPSHOTS_SINCE = (() => {
+  const v = (import.meta.env.VITE_RELIABLE_SNAPSHOTS_SINCE ?? "").trim();
+  if (v.toLowerCase() === "none") return null;
+  if (v) return v;
+  return "2026-03-15";
+})();
+
+function reliableSnapshotAxisX(viewsData) {
+  if (!RELIABLE_SNAPSHOTS_SINCE || !viewsData?.length) return null;
+  const row = viewsData.find((r) => r.raw === RELIABLE_SNAPSHOTS_SINCE);
+  return row?.d ?? null;
+}
+
+const DAILY_GROWTH_RANGE_OPTIONS = [
+  { id: "all", label: "All time" },
+  { id: "ytd", label: "YTD" },
+  { id: "1y", label: "1 year" },
+  { id: "3m", label: "3 months" },
+  { id: "1m", label: "1 month" },
+  { id: "1w", label: "1 week" },
+];
+
+function getDailyGrowthRangeCutoff(rangeId) {
+  if (!rangeId || rangeId === "all") return null;
+  const now = new Date();
+  if (rangeId === "ytd") return `${now.getFullYear()}-01-01`;
+  let daysBack = 365;
+  if (rangeId === "1y") daysBack = 365;
+  else if (rangeId === "3m") daysBack = 92;
+  else if (rangeId === "1m") daysBack = 30;
+  else if (rangeId === "1w") daysBack = 7;
+  const d = new Date(now.getTime() - daysBack * 86400000);
+  return d.toISOString().slice(0, 10);
+}
+
+function filterDailyGrowthByRange(rows, rangeId) {
+  if (!rows?.length || !rangeId || rangeId === "all") return rows || [];
+  const cutoff = getDailyGrowthRangeCutoff(rangeId);
+  if (!cutoff) return rows;
+  return rows.filter((r) => (r.raw || "") >= cutoff);
+}
+
+function buildDailyGrowthSeriesFromChannels(channels, todayStr) {
+  const fmtD = formatAxisDateShort;
+  const byDate = {};
+  (channels || []).forEach((ch) => {
+    channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
+      const key = row.raw || row.d;
+      if (key === todayStr) return;
+      if (!byDate[key]) byDate[key] = { d: fmtD(key), raw: key, dailyGrowth: 0 };
+      byDate[key].dailyGrowth += dailyGrowth;
+    });
+  });
+  clipAggregateDailySpikes(byDate);
+  let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+  let runSum = 0;
+  sorted.forEach((r) => {
+    runSum += r.dailyGrowth;
+    r.cumViews = runSum;
+  });
+  if (sorted.length === 1) {
+    const d0 = sorted[0].raw || "";
+    const prev = new Date(d0 ? d0 + "T12:00:00Z" : Date.now());
+    prev.setDate(prev.getDate() - 1);
+    const prevStr = prev.toISOString().slice(0, 10);
+    sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
+  }
+  return fillDailyGrowthGaps(sorted);
+}
+
 /** Fill missing days in daily growth data so the chart shows smooth daily points (no gaps). */
 function fillDailyGrowthGaps(sorted) {
   if (!sorted?.length) return [];
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const byRaw = Object.fromEntries(sorted.map(r => [r.raw, r]));
   let first = sorted[0].raw;
   let last = sorted[sorted.length - 1].raw;
@@ -354,7 +440,7 @@ function fillDailyGrowthGaps(sorted) {
     const existing = byRaw[raw];
     const cumViews = existing ? existing.cumViews : prevCum;
     result.push({
-      d: `${months[d.getMonth()]} ${d.getDate()}`,
+      d: formatAxisDateShort(raw),
       raw,
       cumViews,
       views: 0,
@@ -511,43 +597,42 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const prefersReducedMotion = usePrefersReducedMotion();
   const skipNumberAnim = isMobile || prefersReducedMotion;
 
-  const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles))];
+  const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b =>
+    (b.handles || []).filter(key => b.handleStatus?.[key] !== false)
+  ))];
   const allChannelsLoaded = uniqueKeys.length === 0 || uniqueKeys.every(k => channelData[k]);
   const dataReady = !brandsLoading && allChannelsLoaded;
   const showChartsAndBrands = !brandsLoading;
   const keyToBrand = {};
   (brandsFromDb || []).forEach(b => {
-    b.handles.forEach(h => {
+    (b.handles || []).forEach(h => {
+      if (b.handleStatus?.[h] === false) return;
       if (!keyToBrand[h]) keyToBrand[h] = b.name;
     });
   });
   const allChannels = uniqueKeys.map(h => channelData[h]).filter(Boolean);
-  const viewsData = (() => {
+  const [dailyGrowthRange, setDailyGrowthRange] = useState(() => {
+    try {
+      const v = localStorage.getItem("overview-dg-range");
+      if (v && DAILY_GROWTH_RANGE_OPTIONS.some((o) => o.id === v)) return v;
+    } catch {}
+    return "all";
+  });
+  const persistDailyGrowthRange = useCallback((id) => {
+    setDailyGrowthRange(id);
+    try {
+      localStorage.setItem("overview-dg-range", id);
+    } catch {}
+  }, []);
+  const viewsDataFull = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
-    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const fmtD = (raw) => { const d = new Date(raw + "T12:00:00Z"); return `${months[d.getMonth()]} ${d.getDate()}`; };
-    const byDate = {};
-    allChannels.forEach(ch => {
-      channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
-        const key = row.raw || row.d;
-        if (key === todayStr) return;
-        if (!byDate[key]) byDate[key] = { d: row.d, raw: key, dailyGrowth: 0 };
-        byDate[key].dailyGrowth += dailyGrowth;
-      });
-    });
-    clipAggregateDailySpikes(byDate);
-    let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
-    let runSum = 0;
-    sorted.forEach(r => { runSum += r.dailyGrowth; r.cumViews = runSum; });
-    if (sorted.length === 1) {
-      const d = sorted[0].raw || "";
-      const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
-      prev.setDate(prev.getDate() - 1);
-      const prevStr = prev.toISOString().slice(0, 10);
-      sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
-    }
-    return fillDailyGrowthGaps(sorted);
-  })();
+    return buildDailyGrowthSeriesFromChannels(allChannels, todayStr);
+  }, [allChannels]);
+  const viewsData = useMemo(
+    () => filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange),
+    [viewsDataFull, dailyGrowthRange]
+  );
+  const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
   const totalFollowers = allChannels.reduce((s, ch) => s + getFollowers(ch), 0);
@@ -638,7 +723,22 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
 
         <div className="g3" style={{visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
           <div className="panel" style={{display:"flex",flexDirection:"column"}}>
-            <div className="ph" style={{flexShrink:0}}><span className="ptitle">DAILY GROWTH</span></div>
+            <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
+              <span className="ptitle">DAILY GROWTH</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    className={`tbtn ${dailyGrowthRange === o.id ? "act" : ""}`}
+                    style={{ fontSize: 10, padding: "3px 8px" }}
+                    onClick={() => persistDailyGrowthRange(o.id)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             {viewsData.length > 0 ? (
               <div style={{flex:1,minHeight:0}}>
               <ResponsiveContainer width="100%" height="100%">
@@ -653,6 +753,15 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                   <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
                   <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
                   <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv)" name="Daily growth" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
+                  {reliableSnapshotLineX && (
+                    <ReferenceLine
+                      x={reliableSnapshotLineX}
+                      stroke="rgba(245,242,237,0.45)"
+                      strokeWidth={1}
+                      strokeDasharray="4 4"
+                      isFront
+                    />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
               </div>
@@ -867,32 +976,35 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const totalComments = posts.reduce((s, p) => s + (p.cmts || 0), 0);
   const thumbs = getAllBrandThumbs(dbBrand, channelData);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const viewsData = (() => {
-    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const fmtD = (raw) => { const d = new Date(raw + "T12:00:00Z"); return `${months[d.getMonth()]} ${d.getDate()}`; };
-    const byDate = {};
-    chData.forEach(ch => {
-      channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
-        const key = row.raw || row.d;
-        if (key === todayStr) return;
-        if (!byDate[key]) byDate[key] = { d: row.d, raw: key, dailyGrowth: 0 };
-        byDate[key].dailyGrowth += dailyGrowth;
-      });
-    });
-    clipAggregateDailySpikes(byDate);
-    let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
-    let runSum = 0;
-    sorted.forEach(r => { runSum += r.dailyGrowth; r.cumViews = runSum; });
-    if (sorted.length === 1) {
-      const d = sorted[0].raw || "";
-      const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
-      prev.setDate(prev.getDate() - 1);
-      const prevStr = prev.toISOString().slice(0, 10);
-      sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
+  const dgStorageKey = `brand-dg-range-${brandId}`;
+  const [dailyGrowthRange, setDailyGrowthRange] = useState("all");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(dgStorageKey);
+      if (v && DAILY_GROWTH_RANGE_OPTIONS.some((o) => o.id === v)) setDailyGrowthRange(v);
+      else setDailyGrowthRange("all");
+    } catch {
+      setDailyGrowthRange("all");
     }
-    return fillDailyGrowthGaps(sorted);
-  })();
+  }, [dgStorageKey]);
+  const persistDailyGrowthRange = useCallback(
+    (id) => {
+      setDailyGrowthRange(id);
+      try {
+        localStorage.setItem(dgStorageKey, id);
+      } catch {}
+    },
+    [dgStorageKey]
+  );
+  const viewsDataFull = useMemo(() => {
+    const t = new Date().toISOString().slice(0, 10);
+    return buildDailyGrowthSeriesFromChannels(chData, t);
+  }, [chData]);
+  const viewsData = useMemo(
+    () => filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange),
+    [viewsDataFull, dailyGrowthRange]
+  );
+  const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
 
   const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
 
@@ -933,7 +1045,22 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
             </div>
 
             <div className="panel" style={{marginBottom:14}}>
-              <div className="ph"><span className="ptitle">DAILY GROWTH</span></div>
+              <div className="ph" style={{ flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
+                <span className="ptitle">DAILY GROWTH</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                  {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      className={`tbtn ${dailyGrowthRange === o.id ? "act" : ""}`}
+                      style={{ fontSize: 10, padding: "3px 8px" }}
+                      onClick={() => persistDailyGrowthRange(o.id)}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {viewsData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={150}>
                   <AreaChart data={viewsData} margin={{top:0,right:0,bottom:0,left:-22}}>
@@ -947,6 +1074,15 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                     <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
                     <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
                     <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv-brand)" name="Views" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
+                    {reliableSnapshotLineX && (
+                      <ReferenceLine
+                        x={reliableSnapshotLineX}
+                        stroke="rgba(245,242,237,0.45)"
+                        strokeWidth={1}
+                        strokeDasharray="4 4"
+                        isFront
+                      />
+                    )}
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
@@ -1240,7 +1376,9 @@ export default function App() {
     const loadAndRefetch = async (brandsData, meta = {}) => {
       setBrands(brandsData);
       setChannelMeta(meta);
-      const keys = [...new Set(brandsData.flatMap(b => b.handles))];
+      const keys = [...new Set(brandsData.flatMap(b =>
+        (b.handles || []).filter(key => b.handleStatus?.[key] !== false)
+      ))];
       const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
       const concurrency = isMobile ? 3 : 10;
       for (let i = 0; i < keys.length; i += concurrency) {
@@ -1293,12 +1431,14 @@ export default function App() {
   const toggleActive = useCallback(async (brandId, key, active) => {
     const { handle, platform } = pk(key);
     if (isSupabaseConfigured()) await dbToggleChannelActive(brandId, handle, platform, active);
+    if (!active) removeChannel(key);
+    else fetchChannel(handle, platform, true).catch(() => {});
     setBrands(prev => {
       const n = prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b);
       if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(n)); } catch {}
       return n;
     });
-  }, []);
+  }, [fetchChannel, removeChannel]);
 
   const LAST_REFRESH_KEY = "tambareni-last-refresh";
   const SYNC_IN_PROGRESS_KEY = "tambareni-sync-in-progress";
