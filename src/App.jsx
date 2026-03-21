@@ -263,6 +263,77 @@ const fmtNum = n => {
   return v.toLocaleString();
 };
 
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const fn = () => setMatches(mq.matches);
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
+  }, [query]);
+  return matches;
+}
+
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const fn = () => setReduced(mq.matches);
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
+  }, []);
+  return reduced;
+}
+
+/**
+ * Per-channel day-over-day delta from daily_snapshots (total_views is cumulative).
+ * First snapshot for a channel contributes 0 (no prior baseline).
+ * Implausible jumps (bad API / backfill) are zeroed so the chart isn't dominated by one spike.
+ */
+function channelDailyGrowthFromSnapshots(rows) {
+  const sorted = (rows || []).slice().sort((a, b) => (a.raw || a.d || "").localeCompare(b.raw || b.d || ""));
+  const out = [];
+  sorted.forEach((row, i) => {
+    const prevRow = i > 0 ? sorted[i - 1] : null;
+    const prevCum = prevRow ? (prevRow.views || 0) : 0;
+    const currCum = row.views || 0;
+    let dailyGrowth = prevRow ? Math.max(0, currCum - prevCum) : 0;
+    if (prevRow && prevCum > 0 && currCum >= prevCum) {
+      const ratio = currCum / prevCum;
+      if (ratio > 25 && prevCum < 2_000_000) dailyGrowth = 0;
+      else if (dailyGrowth > 5_000_000 && prevCum < 500_000) dailyGrowth = 0;
+    }
+    out.push({ row, dailyGrowth });
+  });
+  return out;
+}
+
+/** If one calendar day is wildly above the rest, clip it (fixes legacy bad aggregates in DB). */
+function clipAggregateDailySpikes(byDate) {
+  const rows = Object.values(byDate);
+  if (rows.length < 2) return;
+  const sorted = [...rows].sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+  const growths = sorted.map((r) => r.dailyGrowth).filter((g) => g > 0);
+  if (!growths.length) return;
+  const asc = [...growths].sort((a, b) => a - b);
+  const maxG = asc[asc.length - 1];
+  const rest = asc.slice(0, -1);
+  const medRest = rest.length ? rest[Math.floor(rest.length / 2)] : 0;
+  if (rest.length === 0 && maxG > 400_000) {
+    sorted.forEach((r) => {
+      if (r.dailyGrowth > 400_000) r.dailyGrowth = 0;
+    });
+    return;
+  }
+  const baseline = Math.max(medRest * 25, 300_000);
+  if (maxG > baseline * 8) {
+    const cap = Math.max(medRest * 15, 300_000);
+    sorted.forEach((r) => {
+      if (r.dailyGrowth > cap * 2) r.dailyGrowth = cap;
+    });
+  }
+}
+
 /** Fill missing days in daily growth data so the chart shows smooth daily points (no gaps). */
 function fillDailyGrowthGaps(sorted) {
   if (!sorted?.length) return [];
@@ -354,23 +425,24 @@ function DigitSlot({ digit, spinning, delay }) {
     </span>
   );
 }
-function RollingNumber({ value, spinning, format = "full", magnitude }) {
+function RollingNumber({ value, spinning, format = "full", magnitude, skipAnimation }) {
   const num = Math.round(Number(value) || 0);
-  const targetStr = format === "short" ? fmt(num) : fmtNum(num);
   const [displayNum, setDisplayNum] = useState(0);
   const rafRef = useRef();
   useEffect(() => {
+    if (skipAnimation) return;
     if (spinning) {
       const mag = magnitude ?? Math.pow(10, Math.max(0, Math.floor(Math.log10(num + 1))));
       const id = setInterval(() => setDisplayNum(Math.floor(Math.random() * mag)), 80);
       return () => clearInterval(id);
     }
-  }, [spinning, magnitude, num]);
+  }, [skipAnimation, spinning, magnitude, num]);
   useEffect(() => {
+    if (skipAnimation) return;
     if (spinning) return;
     const start = 0;
     const end = num;
-    const duration = 600;
+    const duration = 400;
     const startTime = performance.now();
     const tick = (t) => {
       const elapsed = t - startTime;
@@ -381,7 +453,11 @@ function RollingNumber({ value, spinning, format = "full", magnitude }) {
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [spinning, num]);
+  }, [skipAnimation, spinning, num]);
+  if (skipAnimation) {
+    const s = format === "short" ? fmt(num) : fmtNum(num);
+    return <span style={{ fontVariantNumeric: "tabular-nums" }}>{s}</span>;
+  }
   const displayStr = format === "short" ? fmt(displayNum) : fmtNum(displayNum);
   if (spinning) {
     return (
@@ -431,10 +507,14 @@ function getAllBrandThumbs(brand, channelData) {
 
 function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, syncProgress, syncElapsed, lastSync, syncErrors, onAccounts }) {
   const { channelData } = useYouTubeContext();
+  const isMobile = useMediaQuery("(max-width: 768px)");
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const skipNumberAnim = isMobile || prefersReducedMotion;
 
   const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles))];
   const allChannelsLoaded = uniqueKeys.length === 0 || uniqueKeys.every(k => channelData[k]);
   const dataReady = !brandsLoading && allChannelsLoaded;
+  const showChartsAndBrands = !brandsLoading;
   const keyToBrand = {};
   (brandsFromDb || []).forEach(b => {
     b.handles.forEach(h => {
@@ -448,14 +528,17 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
     const fmtD = (raw) => { const d = new Date(raw + "T12:00:00Z"); return `${months[d.getMonth()]} ${d.getDate()}`; };
     const byDate = {};
     allChannels.forEach(ch => {
-      (ch.dailyViews || []).forEach(row => {
+      channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
         const key = row.raw || row.d;
         if (key === todayStr) return;
-        if (!byDate[key]) byDate[key] = { d: row.d, raw: key, cumViews: 0 };
-        byDate[key].cumViews += (row.views || 0);
+        if (!byDate[key]) byDate[key] = { d: row.d, raw: key, dailyGrowth: 0 };
+        byDate[key].dailyGrowth += dailyGrowth;
       });
     });
+    clipAggregateDailySpikes(byDate);
     let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+    let runSum = 0;
+    sorted.forEach(r => { runSum += r.dailyGrowth; r.cumViews = runSum; });
     if (sorted.length === 1) {
       const d = sorted[0].raw || "";
       const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
@@ -533,7 +616,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
           ].map(k=>(
             <div key={k.l} className="kcard">
               <div className="klbl">{k.l}</div>
-              <div className="kval">{k.decimal ? (dataReady ? <>{k.v.toFixed(2)}%</> : <><RollingNumber value={Math.floor(k.v)} spinning magnitude={10} format="short" />%</>) : <><RollingNumber value={k.v} spinning={!dataReady} magnitude={k.mag} format={k.suffix?"short":"full"} />{k.suffix||""}</>}</div>
+              <div className="kval">{k.decimal ? (dataReady ? <>{k.v.toFixed(2)}%</> : <><RollingNumber value={Math.floor(k.v)} spinning={!skipNumberAnim && !dataReady} magnitude={10} format="short" skipAnimation={skipNumberAnim} />%</>) : <><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={k.mag} format={k.suffix?"short":"full"} skipAnimation={skipNumberAnim} />{k.suffix||""}</>}</div>
               <div className="ksub">{k.s}</div>
             </div>
           ))}
@@ -549,11 +632,11 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
             {l:"Comments",v:totalComments,s:"💬 All content"},
             {l:"Shares",v:totalShares,s:"↗️ All content"},
           ].map(k=>(
-            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval"><RollingNumber value={k.v} spinning={!dataReady} magnitude={1e6} /></div><div className="ksub">{k.s}</div></div>
+            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval"><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /></div><div className="ksub">{k.s}</div></div>
           ))}
         </div>
 
-        <div className="g3" style={{visibility: dataReady ? "visible" : "hidden", opacity: dataReady ? 1 : 0, transition: "opacity 0.4s"}}>
+        <div className="g3" style={{visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
           <div className="panel" style={{display:"flex",flexDirection:"column"}}>
             <div className="ph" style={{flexShrink:0}}><span className="ptitle">DAILY GROWTH</span></div>
             {viewsData.length > 0 ? (
@@ -618,12 +701,12 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
           </div>
         </div>
 
-        <div className="sh" style={{marginBottom:6,flexShrink:0,visibility: dataReady ? "visible" : "hidden", opacity: dataReady ? 1 : 0, transition: "opacity 0.4s"}}>
+        <div className="sh" style={{marginBottom:6,flexShrink:0,visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
           <span className="sht">BRANDS</span>
           <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text3)"}}>{(brandsFromDb||[]).length} brands</span>
         </div>
 
-        <div className="bgrid" style={{flex:1,minHeight:0,overflowY:"auto",alignContent:"start",visibility: dataReady ? "visible" : "hidden", opacity: dataReady ? 1 : 0, transition: "opacity 0.4s"}}>
+        <div className="bgrid" style={{flex:1,minHeight:0,overflowY:"auto",alignContent:"start",visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
           {!(brandsFromDb||[]).length ? (
             <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--text3)",border:"1px dashed var(--border2)",borderRadius:5}}>
               <div style={{fontSize:14,marginBottom:8}}>No brands yet</div>
@@ -656,11 +739,11 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                     {hasData && (
                       <div style={{display:"flex",alignItems:"baseline",gap:12}}>
                         <div style={{textAlign:"center"}}>
-                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandFollowers} spinning={!dataReady} magnitude={1e4} /></div>
+                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandFollowers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} skipAnimation={skipNumberAnim} /></div>
                           <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
                         </div>
                         <div style={{textAlign:"center"}}>
-                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandViews} spinning={!dataReady} magnitude={1e6} /></div>
+                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandViews} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /></div>
                           <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
                         </div>
                       </div>
@@ -688,11 +771,11 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         </div>
                         <div style={{display:"flex",width:"100%",alignItems:"baseline"}}>
                           <div style={{flex:1,textAlign:"center",paddingRight:8,borderRight:"1px solid var(--border2)"}}>
-                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={followers} spinning={!dataReady} magnitude={1e4} /> : "—"}</div>
+                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={followers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} skipAnimation={skipNumberAnim} /> : "—"}</div>
                             <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
                           </div>
                           <div style={{flex:1,textAlign:"center",paddingLeft:8}}>
-                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={views} spinning={!dataReady} magnitude={1e6} /> : "—"}</div>
+                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={views} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /> : "—"}</div>
                             <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
                           </div>
                         </div>
@@ -785,17 +868,22 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const thumbs = getAllBrandThumbs(dbBrand, channelData);
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  const dailyViewsRaw = chData.flatMap(c => c.dailyViews || []).filter(row => row.raw !== todayStr);
   const viewsData = (() => {
     const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const fmtD = (raw) => { const d = new Date(raw + "T12:00:00Z"); return `${months[d.getMonth()]} ${d.getDate()}`; };
     const byDate = {};
-    dailyViewsRaw.forEach(row => {
-      const key = row.raw || row.d;
-      if (!byDate[key]) byDate[key] = { d: row.d, raw: key, cumViews: 0 };
-      byDate[key].cumViews += (row.views || 0);
+    chData.forEach(ch => {
+      channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
+        const key = row.raw || row.d;
+        if (key === todayStr) return;
+        if (!byDate[key]) byDate[key] = { d: row.d, raw: key, dailyGrowth: 0 };
+        byDate[key].dailyGrowth += dailyGrowth;
+      });
     });
+    clipAggregateDailySpikes(byDate);
     let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
+    let runSum = 0;
+    sorted.forEach(r => { runSum += r.dailyGrowth; r.cumViews = runSum; });
     if (sorted.length === 1) {
       const d = sorted[0].raw || "";
       const prev = new Date(d ? d + "T12:00:00Z" : Date.now());
@@ -1149,14 +1237,21 @@ export default function App() {
   };
 
   useEffect(() => {
-    const loadAndRefetch = (brandsData, meta = {}) => {
+    const loadAndRefetch = async (brandsData, meta = {}) => {
       setBrands(brandsData);
       setChannelMeta(meta);
       const keys = [...new Set(brandsData.flatMap(b => b.handles))];
-      return Promise.all(keys.map(key => {
-        const { handle, platform } = pk(key);
-        return fetchChannel(handle, platform).catch(() => null);
-      }));
+      const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
+      const concurrency = isMobile ? 3 : 10;
+      for (let i = 0; i < keys.length; i += concurrency) {
+        const chunk = keys.slice(i, i + concurrency);
+        await Promise.all(
+          chunk.map((key) => {
+            const { handle, platform } = pk(key);
+            return fetchChannel(handle, platform).catch(() => null);
+          })
+        );
+      }
     };
     if (isSupabaseConfigured()) {
       fetchBrandsWithChannels()
