@@ -52,6 +52,7 @@ export function YouTubeProvider({ children }) {
       if (existing) return existing;
 
       const doFetch = async () => {
+        const skipDailySnapshot = opts.skipDailySnapshot === true;
         try {
           const cacheKey = compositeKey;
           if (isSupabaseConfigured() && !forceRefresh) {
@@ -139,7 +140,7 @@ export function YouTubeProvider({ children }) {
               let dailyViews = [];
               if (isSupabaseConfigured()) {
                 const hSnap = entry?.channel?.handle || entry?.platform?.handle || handle;
-                await upsertDailySnapshot(hSnap, plat, snapshotFieldsFromEntry(entry)).catch(() => {});
+                if (!skipDailySnapshot) await upsertDailySnapshot(hSnap, plat, snapshotFieldsFromEntry(entry)).catch(() => {});
                 dailyViews = (await fetchDailySnapshots(handle, plat)).map(row => ({
                   d: formatChartDate(row.snapshot_date),
                   raw: row.snapshot_date,
@@ -230,7 +231,7 @@ export function YouTubeProvider({ children }) {
           };
           let dailyViews = [];
           if (isSupabaseConfigured()) {
-            await upsertDailySnapshot(ch?.handle || handle, plat, snapshotFieldsFromEntry(pendingForSnapshot)).catch(() => {});
+            if (!skipDailySnapshot) await upsertDailySnapshot(ch?.handle || handle, plat, snapshotFieldsFromEntry(pendingForSnapshot)).catch(() => {});
             dailyViews = (await fetchDailySnapshots(handle, plat)).map(row => ({
               d: formatChartDate(row.snapshot_date),
               raw: row.snapshot_date,

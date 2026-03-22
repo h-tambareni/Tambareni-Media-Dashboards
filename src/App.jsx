@@ -597,16 +597,14 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const prefersReducedMotion = usePrefersReducedMotion();
   const skipNumberAnim = isMobile || prefersReducedMotion;
 
-  const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b =>
-    (b.handles || []).filter(key => b.handleStatus?.[key] !== false)
-  ))];
+  // Include inactive accounts so totals still show last-known flw/views (deactivate = stop syncing, not erase data).
+  const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles || []))];
   const allChannelsLoaded = uniqueKeys.length === 0 || uniqueKeys.every(k => channelData[k]);
   const dataReady = !brandsLoading && allChannelsLoaded;
   const showChartsAndBrands = !brandsLoading;
   const keyToBrand = {};
   (brandsFromDb || []).forEach(b => {
     (b.handles || []).forEach(h => {
-      if (b.handleStatus?.[h] === false) return;
       if (!keyToBrand[h]) keyToBrand[h] = b.name;
     });
   });
@@ -1376,9 +1374,7 @@ export default function App() {
     const loadAndRefetch = async (brandsData, meta = {}) => {
       setBrands(brandsData);
       setChannelMeta(meta);
-      const keys = [...new Set(brandsData.flatMap(b =>
-        (b.handles || []).filter(key => b.handleStatus?.[key] !== false)
-      ))];
+      const keys = [...new Set(brandsData.flatMap(b => b.handles || []))];
       const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
       const concurrency = isMobile ? 3 : 10;
       for (let i = 0; i < keys.length; i += concurrency) {
@@ -1386,7 +1382,10 @@ export default function App() {
         await Promise.all(
           chunk.map((key) => {
             const { handle, platform } = pk(key);
-            return fetchChannel(handle, platform).catch(() => null);
+            const anyActive = brandsData.some(
+              (b) => (b.handles || []).includes(key) && b.handleStatus?.[key] !== false
+            );
+            return fetchChannel(handle, platform, false, false, { skipDailySnapshot: !anyActive }).catch(() => null);
           })
         );
       }
@@ -1431,14 +1430,14 @@ export default function App() {
   const toggleActive = useCallback(async (brandId, key, active) => {
     const { handle, platform } = pk(key);
     if (isSupabaseConfigured()) await dbToggleChannelActive(brandId, handle, platform, active);
-    if (!active) removeChannel(key);
-    else fetchChannel(handle, platform, true).catch(() => {});
+    // Keep last-known stats in memory when deactivating; do not clear channelData.
+    if (active) fetchChannel(handle, platform, true, false, { skipDailySnapshot: false }).catch(() => {});
     setBrands(prev => {
       const n = prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b);
       if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(n)); } catch {}
       return n;
     });
-  }, [fetchChannel, removeChannel]);
+  }, [fetchChannel]);
 
   const LAST_REFRESH_KEY = "tambareni-last-refresh";
   const SYNC_IN_PROGRESS_KEY = "tambareni-sync-in-progress";
