@@ -280,17 +280,6 @@ const fmtNum = n => {
   return v.toLocaleString();
 };
 
-function useMediaQuery(query) {
-  const [matches, setMatches] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const fn = () => setMatches(mq.matches);
-    mq.addEventListener("change", fn);
-    return () => mq.removeEventListener("change", fn);
-  }, [query]);
-  return matches;
-}
-
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   useEffect(() => {
@@ -610,9 +599,9 @@ function getAllBrandThumbs(brand, channelData) {
 
 function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, syncProgress, syncElapsed, lastSync, syncErrors, onAccounts }) {
   const { channelData } = useYouTubeContext();
-  const isMobile = useMediaQuery("(max-width: 768px)");
   const prefersReducedMotion = usePrefersReducedMotion();
-  const skipNumberAnim = isMobile || prefersReducedMotion;
+  // Keep digit spin on phones; only skip for accessibility (prefers-reduced-motion).
+  const skipNumberAnim = prefersReducedMotion;
 
   // Include inactive accounts so totals still show last-known flw/views (deactivate = stop syncing, not erase data).
   const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles || []))];
