@@ -15,6 +15,23 @@ import {
   ck, pk,
 } from "./lib/supabaseDb";
 
+/** Keeps `limit` channel fetches in flight until all complete (vs waiting for whole batches). */
+async function runWithConcurrency(items, limit, fn) {
+  const ret = new Array(items.length);
+  let next = 0;
+  const n = items.length;
+  const workers = Math.min(Math.max(1, limit), n || 1);
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= n) break;
+      ret[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return ret;
+}
+
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
 
 const css = `
@@ -1376,19 +1393,14 @@ export default function App() {
       setChannelMeta(meta);
       const keys = [...new Set(brandsData.flatMap(b => b.handles || []))];
       const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
-      const concurrency = isMobile ? 3 : 10;
-      for (let i = 0; i < keys.length; i += concurrency) {
-        const chunk = keys.slice(i, i + concurrency);
-        await Promise.all(
-          chunk.map((key) => {
-            const { handle, platform } = pk(key);
-            const anyActive = brandsData.some(
-              (b) => (b.handles || []).includes(key) && b.handleStatus?.[key] !== false
-            );
-            return fetchChannel(handle, platform, false, false, { skipDailySnapshot: !anyActive }).catch(() => null);
-          })
+      const concurrency = isMobile ? 6 : 12;
+      await runWithConcurrency(keys, concurrency, (key) => {
+        const { handle, platform } = pk(key);
+        const anyActive = brandsData.some(
+          (b) => (b.handles || []).includes(key) && b.handleStatus?.[key] !== false
         );
-      }
+        return fetchChannel(handle, platform, false, false, { skipDailySnapshot: !anyActive }).catch(() => null);
+      });
     };
     if (isSupabaseConfigured()) {
       fetchBrandsWithChannels()

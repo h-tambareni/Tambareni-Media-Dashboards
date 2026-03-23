@@ -54,21 +54,20 @@ export function YouTubeProvider({ children }) {
       const doFetch = async () => {
         const skipDailySnapshot = opts.skipDailySnapshot === true;
         try {
-          const cacheKey = compositeKey;
-          if (isSupabaseConfigured() && !forceRefresh) {
-            const cached = await getCachedChannelWithFallback(handle, plat);
-            if (isCacheFresh(cached)) {
-              const snap = parseCachedSnapshot(cached);
-              if (snap) {
-                setChannels((prev) => ({ ...prev, [compositeKey]: snap }));
-                setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
-                return snap;
-              }
+          // One cache read per channel. Stale-while-revalidate: paint last snapshot immediately, then refresh.
+          let cached = null;
+          let cachedSnap = null;
+          if (isSupabaseConfigured()) {
+            cached = await getCachedChannelWithFallback(handle, plat);
+            cachedSnap = cached ? parseCachedSnapshot(cached) : null;
+            if (!forceRefresh && cachedSnap) {
+              setChannels((prev) => ({ ...prev, [compositeKey]: cachedSnap }));
+              setConnectedHandles((prev) => (prev.includes(compositeKey) ? prev : [...prev, compositeKey]));
+              if (isCacheFresh(cached)) return cachedSnap;
             }
           }
 
-          const cachedRow = isSupabaseConfigured() ? await getCachedChannelWithFallback(handle, plat) : null;
-          const cachedSnap = cachedRow ? parseCachedSnapshot(cachedRow) : null;
+          const cachedRow = cached;
           const cachedPosts = cachedSnap?.posts || [];
           const lastFullFetch = cachedSnap?.last_full_fetch_at ? new Date(cachedSnap.last_full_fetch_at) : null;
           const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
