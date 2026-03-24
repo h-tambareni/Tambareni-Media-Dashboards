@@ -228,32 +228,65 @@ export async function upsertChannelCache(channelHandle, snapshot) {
 
 // ─── Daily snapshots (for views-over-time chart) ───────────────────────────
 
+/** Legacy helper — not used by the web app. Inserts another row for today (multiple per day allowed; charts use latest by `created_at`). */
 export async function upsertDailySnapshot(channelHandle, platform, { totalViews, followers, videoCount }) {
   if (!isSupabaseConfigured()) return;
   const today = new Date().toISOString().slice(0, 10);
   const h = norm(channelHandle);
-  await supabase.from("daily_snapshots").upsert({
+  await supabase.from("daily_snapshots").insert({
     channel_handle: h,
     platform,
     snapshot_date: today,
     total_views: totalViews ?? 0,
     followers: followers ?? 0,
     video_count: videoCount ?? 0,
-  }, { onConflict: "channel_handle,platform,snapshot_date" });
+  });
 }
 
-export async function fetchDailySnapshots(channelHandle, platform, days = 90) {
+/**
+ * When multiple snapshot rows exist for the same calendar day (e.g. cron re-runs while testing),
+ * keep the one with the greatest created_at (ties: last in sort order).
+ */
+export function pickLatestSnapshotsPerDay(rows) {
+  if (!rows?.length) return [];
+  const byDate = new Map();
+  for (const r of rows) {
+    const d = r.snapshot_date;
+    if (d == null) continue;
+    const key = typeof d === "string" ? d.slice(0, 10) : d;
+    const prev = byDate.get(key);
+    const t = r.created_at ? new Date(r.created_at).getTime() : 0;
+    const pt = prev?.created_at ? new Date(prev.created_at).getTime() : -1;
+    const better =
+      !prev ||
+      t > pt ||
+      (t === pt && String(r.id || "") >= String(prev.id || ""));
+    if (better) byDate.set(key, r);
+  }
+  return [...byDate.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([, v]) => v);
+}
+
+/**
+ * Snapshot history for charting: one effective row per calendar day — if multiple rows exist
+ * for the same day (testing re-runs), uses the latest by `created_at`.
+ */
+export async function fetchDailySnapshots(channelHandle, platform, days = null) {
   if (!isSupabaseConfigured()) return [];
-  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
   const h = norm(channelHandle);
-  const { data } = await supabase
+  let q = supabase
     .from("daily_snapshots")
-    .select("snapshot_date, total_views, followers")
+    .select("id, snapshot_date, total_views, followers, created_at")
     .eq("channel_handle", h)
-    .eq("platform", platform)
-    .gte("snapshot_date", since)
-    .order("snapshot_date", { ascending: true });
-  return data ?? [];
+    .eq("platform", platform);
+  if (days != null && Number(days) > 0) {
+    const since = new Date(Date.now() - Number(days) * 86400000).toISOString().slice(0, 10);
+    q = q.gte("snapshot_date", since);
+  }
+  const { data } = await q
+    .order("snapshot_date", { ascending: true })
+    .order("created_at", { ascending: true })
+    .limit(50000);
+  return pickLatestSnapshotsPerDay(data ?? []);
 }
 
 /** Stores when Sync All was last run (shared across devices). */

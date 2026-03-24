@@ -71,7 +71,7 @@ const css = `
 .b-avatar { width:22px; height:22px; border-radius:3px; display:flex; align-items:center; justify-content:center; font-family:var(--display); font-size:11px; flex-shrink:0; }
 .rbadge { background:var(--red); color:white; font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px; margin-left:auto; }
 .dbadge { background:#1a1a1a; color:var(--text3); font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px; margin-left:auto; }
-.main { flex:1; overflow-x:hidden; overflow-y:auto; min-width:0; height:100vh; }
+.main { flex:1; overflow-x:hidden; overflow-y:auto; min-width:0; min-height:0; height:100vh; display:flex; flex-direction:column; }
 .topbar { height:48px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:var(--surface); position:sticky; top:0; z-index:10; }
 .topbar-title { font-family:var(--display); font-size:20px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
 .tr { display:flex; align-items:center; gap:10px; }
@@ -86,7 +86,7 @@ const css = `
 .page { padding:16px 24px; }
 .page-fit { display:flex; flex-direction:column; height:calc(100vh - 48px); overflow:hidden; }
 .page-fit > * { flex-shrink:0; }
-.page-fit .bgrid { flex:1; min-height:0; overflow-y:auto; align-content:start; }
+.page-fit .bgrid, .page-fit .ov-brands-split { flex:1; min-height:0; overflow-y:auto; align-content:start; }
 .krow { display:grid; gap:1px; background:var(--border); border:1px solid var(--border); border-radius:5px; overflow:hidden; margin-bottom:12px; }
 .kcard { background:var(--surface); padding:16px 20px; }
 .klbl { font-family:var(--mono); font-size:11px; color:var(--text2); letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
@@ -95,6 +95,19 @@ const css = `
 .kchg { font-family:var(--mono); font-size:9px; margin-top:3px; }
 .up { color:var(--green); } .dn { color:var(--red); }
 .g3 { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:12px; height:340px; flex-shrink:0; }
+.ov-dg-row { display:grid; grid-template-columns:2fr 1fr; gap:12px; margin-bottom:12px; height:340px; flex-shrink:0; align-items:stretch; min-height:0; }
+.ov-brands-split { display:grid; grid-template-columns:1fr 1fr 1fr; grid-template-rows:auto auto; gap:12px; align-content:start; align-items:stretch; }
+.ov-brands-split-corner { grid-column:1; grid-row:1; min-height:0; }
+.ov-brands-header-cols { grid-column:2 / 4; grid-row:1; display:flex; align-items:center; justify-content:space-between; margin-bottom:0; flex-shrink:0; }
+.ov-pie-posts-stack { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; align-self:stretch; width:100%; overflow:hidden; }
+.ov-top-posts-panel { padding:10px 12px !important; flex:1 1 0 !important; min-height:0 !important; display:flex !important; flex-direction:column !important; overflow:hidden !important; }
+.ov-top-posts-list { gap:3px !important; flex:1 1 0 !important; min-height:0 !important; overflow-y:auto !important; overflow-x:hidden; }
+.top-post-row-compact { padding:3px 6px !important; border-radius:2px; }
+.top-post-row-compact .tpr-meta { font-size:8px; line-height:1.15; margin:0; }
+.top-post-row-compact .tpr-cap { font-size:9px; line-height:1.2; margin-top:1px; white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.ov-brand-col { display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; align-self:stretch; overflow:visible; align-content:start; justify-content:flex-start; }
+.ov-brand-col--a { grid-column:2; grid-row:2; }
+.ov-brand-col--b { grid-column:3; grid-row:2; }
 .panel { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:14px 16px; overflow:hidden; min-height:0; }
 .ph { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
 .ptitle { font-family:var(--display); font-size:14px; letter-spacing:2px; color:var(--text); cursor:default; user-select:none; }
@@ -179,6 +192,7 @@ const css = `
   .klbl { font-size: 9px; margin-bottom: 3px; }
   .ksub { font-size: 8px; }
   .g3 { height: 280px; gap: 8px; margin-bottom: 8px; }
+  .ov-dg-row { height: 280px; gap: 8px; margin-bottom: 8px; }
   .krow { margin-bottom: 8px; }
   .page { padding: 10px 16px; }
   .topbar { height: 40px; }
@@ -188,18 +202,32 @@ const css = `
   .kval { font-size: 32px; }
   .kcard { padding: 8px 10px; }
   .g3 { height: 220px; }
+  .ov-dg-row { height: 220px; }
 }
 
 @media (max-width: 1200px) {
   .kval { font-size: 48px; }
   .bgrid { grid-template-columns: repeat(2, 1fr); }
+  .ov-brands-split { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto auto; }
+  .ov-brands-split-corner { display: none; }
+  .ov-brands-header-cols { grid-column: 1 / -1 !important; grid-row: 2; }
+  .ov-pie-posts-stack { grid-column: 1 / -1 !important; grid-row: 1; }
+  .ov-brand-col--a { grid-column: 1; grid-row: 3; }
+  .ov-brand-col--b { grid-column: 2; grid-row: 3; }
   .pgrid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 900px) {
   .kval { font-size: 36px; }
   .g3 { grid-template-columns: 1fr; height: auto; min-height: auto; }
+  .ov-dg-row { grid-template-columns: 1fr; height: auto; min-height: auto; }
   .bgrid { grid-template-columns: 1fr; }
+  .ov-brands-split { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; }
+  .ov-brands-split-corner { display: none; }
+  .ov-brands-header-cols { grid-column: 1 / -1; grid-row: 2; }
+  .ov-pie-posts-stack { grid-column: 1 / -1; grid-row: 1; }
+  .ov-brand-col--a { grid-column: 1; grid-row: 3; }
+  .ov-brand-col--b { grid-column: 1; grid-row: 4; }
   .pgrid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -213,6 +241,8 @@ const css = `
   .mobile-topbar-title { font-family: var(--display); font-size: 12px; letter-spacing: 1px; color: var(--text); flex-shrink: 0; text-align: right; }
   .top-posts-panel { flex: 0 0 auto !important; max-height: 200px; }
   .top-posts-list { max-height: 140px !important; }
+  .ov-pie-posts-stack .top-posts-panel { max-height: none !important; flex: 1 1 auto !important; min-height: 0 !important; }
+  .ov-pie-posts-stack .top-posts-list { max-height: none !important; }
   .top-post-row { padding: 4px 6px !important; }
   .sidebar-overlay { display: block; }
   .sidebar { position: fixed; top: 0; left: 0; z-index: 1000; height: 100vh; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,.5); }
@@ -229,7 +259,9 @@ const css = `
   .kval { font-size: 32px; }
   .ksub { font-size: 9px; }
   .g3 { grid-template-columns: 1fr; height: auto; min-height: 0; margin-bottom: 12px; }
+  .ov-dg-row { grid-template-columns: 1fr; height: auto; min-height: 0; margin-bottom: 12px; }
   .g3 > .panel:not(.top-posts-panel) { min-height: 180px; }
+  .ov-dg-row > .panel { min-height: 180px; }
   .panel { padding: 12px 14px; }
   .ptitle { font-size: 12px; }
   .bgrid { grid-template-columns: 1fr; }
@@ -427,18 +459,28 @@ function chartDayKey(r) {
   return r?.activityRaw ?? r?.raw ?? "";
 }
 
-/** YYYY-MM-DD: dotted vertical line at this day (to the right = reliable 24h snapshots). VITE_RELIABLE_SNAPSHOTS_SINCE=none hides the line. */
+/** YYYY-MM-DD: chart X / activity calendar day for the dotted line (to the right = reliable). Matches `activityRaw` on Daily Growth. VITE_RELIABLE_SNAPSHOTS_SINCE=none hides the line. */
 const RELIABLE_SNAPSHOTS_SINCE = (() => {
   const v = (import.meta.env.VITE_RELIABLE_SNAPSHOTS_SINCE ?? "").trim();
   if (v.toLowerCase() === "none") return null;
   if (v) return v;
-  return "2026-03-15";
+  return "2026-03-23";
 })();
 
 function reliableSnapshotAxisX(viewsData) {
   if (!RELIABLE_SNAPSHOTS_SINCE || !viewsData?.length) return null;
-  const row = viewsData.find((r) => r.raw === RELIABLE_SNAPSHOTS_SINCE);
-  return chartDayKey(row) || null;
+  const row = viewsData.find((r) => chartDayKey(r) === RELIABLE_SNAPSHOTS_SINCE);
+  return row ? chartDayKey(row) : RELIABLE_SNAPSHOTS_SINCE;
+}
+
+/** Weekday buckets only use rows on/after the reliable cutoff (same activity day as dotted line). */
+function filterViewsDataReliableOnly(rows) {
+  if (!rows?.length) return rows || [];
+  if (!RELIABLE_SNAPSHOTS_SINCE) return rows;
+  return rows.filter((r) => {
+    const day = chartDayKey(r);
+    return day && day >= RELIABLE_SNAPSHOTS_SINCE;
+  });
 }
 
 /** ~10 readable X ticks; uses chart day key (activity calendar day). */
@@ -701,32 +743,58 @@ const WeekdayGrowthTooltip = ({ active, payload }) => {
   );
 };
 
-function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle }) {
+function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle, fillHeight }) {
   const hasSamples = (data || []).some((d) => d.days > 0);
+  const chartWrapStyle = fillHeight
+    ? { flex: 1, minHeight: 0, width: "100%", display: "flex", flexDirection: "column" }
+    : { height };
   return (
     <div className="panel" style={{ marginBottom: 12, ...panelStyle }}>
-      <div className="ph" style={{ marginBottom: 6 }}>
+      <div className="ph" style={{ marginBottom: 6, flexShrink: 0 }}>
         <span className="ptitle">DAY OF WEEK</span>
       </div>
       {hasSamples ? (
-        <ResponsiveContainer width="100%" height={height}>
-          <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 2 }}>
-            <XAxis dataKey="name" tick={{ fontFamily: "DM Mono", fontSize: 9, fill: "#666" }} axisLine={false} tickLine={false} />
-            <YAxis
-              tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
-              axisLine={false}
-              tickLine={false}
-              tickFormatter={fmtWhole}
-              width={36}
-            />
-            <Tooltip content={<WeekdayGrowthTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-            <Bar dataKey="avg" name="Avg daily growth" fill="#ff6b6b" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
+        <div style={chartWrapStyle}>
+          <ResponsiveContainer width="100%" height={fillHeight ? "100%" : height}>
+            <BarChart
+              data={data}
+              margin={{ top: 22, right: 8, left: 2, bottom: 4 }}
+              barCategoryGap="8%"
+              barGap={3}
+            >
+              <XAxis
+                dataKey="name"
+                type="category"
+                interval={0}
+                tick={{ fontFamily: "DM Mono", fontSize: 9, fill: "#888" }}
+                axisLine={false}
+                tickLine={false}
+                height={26}
+              />
+              <YAxis
+                tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={fmtWhole}
+                width={38}
+              />
+              <Tooltip content={<WeekdayGrowthTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+              <Bar dataKey="avg" name="Avg daily growth" fill="#ff6b6b" radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                <LabelList
+                  dataKey="avg"
+                  position="top"
+                  offset={4}
+                  formatter={(v) => fmtWhole(v)}
+                  style={{ fontFamily: "DM Mono", fontSize: 8, fill: "#aaa" }}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       ) : (
         <div
           style={{
-            height,
+            ...(fillHeight ? { flex: 1, minHeight: 0 } : { height }),
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -870,6 +938,86 @@ function getAllBrandThumbs(brand, channelData) {
   return urls;
 }
 
+function OverviewBrandCard({ b, channelData, onBrand, dataReady, skipNumberAnim }) {
+  const allHandles = b.handles || [];
+  const chData = allHandles.map(h => channelData[h]).filter(Boolean);
+  const brandFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
+  const brandViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
+  const thumbs = getAllBrandThumbs(b, channelData);
+  const hasData = chData.length > 0;
+  const allInactive = allHandles.length > 0 && allHandles.every(h => b.handleStatus?.[h] === false);
+  const hasTT = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "tiktok");
+  const hasYT = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "youtube");
+  const hasIG = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "instagram");
+  const cols = [];
+  if (hasTT) cols.push({ pt: "tiktok", name: "TikTok" });
+  if (hasYT) cols.push({ pt: "youtube", name: "YouTube" });
+  if (hasIG) cols.push({ pt: "instagram", name: "Instagram" });
+  const boxStyle = { flex: "0 0 calc((100% - 16px) / 3)", minWidth: 0 };
+  return (
+    <div className={`bcard${!hasData ? " dead" : ""}`} onClick={() => onBrand(b.id)}>
+      <div className="bcard-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <Pfp srcs={thumbs} size={32} name={b.name} />
+          <span className="bcard-name">{b.name}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {hasData && (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontFamily: "var(--display)", fontSize: 17, color: "var(--text)", lineHeight: 1.2 }}>
+                  <RollingNumber value={brandFollowers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} skipAnimation={skipNumberAnim} />
+                </div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 7, color: "var(--text3)" }}>flw</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontFamily: "var(--display)", fontSize: 17, color: "var(--text)", lineHeight: 1.2 }}>
+                  <RollingNumber value={brandViews} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} />
+                </div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 7, color: "var(--text3)" }}>views</div>
+              </div>
+            </div>
+          )}
+          <span className={`bstatus ${allInactive ? "s-dead" : hasData ? "s-active" : "s-dead"}`}>{allInactive ? "inactive" : hasData ? "active" : "sync needed"}</span>
+        </div>
+      </div>
+      {cols.length > 0 && (
+        <div className="bcard-platforms" style={{ display: "flex", justifyContent: "center", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+          {cols.map(({ pt, name }) => {
+            const ptHandles = allHandles.filter(h => (h.includes("::") ? h.split("::")[1] : "youtube") === pt);
+            const ptChData = ptHandles.map(h => channelData[h]).filter(Boolean);
+            const followers = ptChData.reduce((s, c) => s + getFollowers(c), 0);
+            const views = ptChData.reduce((s, c) => s + (c.totalViews || 0), 0);
+            const ptBadges = ptHandles.map(key => ({ key, isActive: b.handleStatus?.[key] !== false }));
+            return (
+              <div key={pt} style={{ ...boxStyle, display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 6px", background: "var(--surface2)", borderRadius: 4, border: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginBottom: 6 }}>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--text3)" }}>{name}</span>
+                  <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                    {ptBadges.map(({ key, isActive }) => (
+                      <span key={key} style={{ fontSize: 7, padding: "1px 4px", borderRadius: 2, background: isActive ? "var(--green-dim)" : "var(--red-dim)", color: isActive ? "var(--green)" : "var(--red)" }}>{isActive ? "active" : "inactive"}</span>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", width: "100%", alignItems: "baseline" }}>
+                  <div style={{ flex: 1, textAlign: "center", paddingRight: 8, borderRight: "1px solid var(--border2)" }}>
+                    <div style={{ fontFamily: "var(--display)", fontSize: 17, color: "var(--text)", lineHeight: 1.2 }}>{ptChData.length ? <RollingNumber value={followers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} skipAnimation={skipNumberAnim} /> : "—"}</div>
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 7, color: "var(--text3)" }}>flw</div>
+                  </div>
+                  <div style={{ flex: 1, textAlign: "center", paddingLeft: 8 }}>
+                    <div style={{ fontFamily: "var(--display)", fontSize: 17, color: "var(--text)", lineHeight: 1.2 }}>{ptChData.length ? <RollingNumber value={views} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /> : "—"}</div>
+                    <div style={{ fontFamily: "var(--mono)", fontSize: 7, color: "var(--text3)" }}>views</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, syncProgress, syncElapsed, lastSync, syncErrors, onAccounts }) {
   const { channelData } = useYouTubeContext();
   const prefersReducedMotion = usePrefersReducedMotion();
@@ -910,7 +1058,13 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
-  const weekdayGrowthData = useMemo(() => buildWeekdayGrowthChartData(viewsData), [viewsData]);
+  const weekdayGrowthData = useMemo(
+    () => buildWeekdayGrowthChartData(filterViewsDataReliableOnly(viewsData)),
+    [viewsData]
+  );
+  const brandsList = brandsFromDb || [];
+  const brandsColLeft = brandsList.filter((_, i) => i % 2 === 0);
+  const brandsColRight = brandsList.filter((_, i) => i % 2 === 1);
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
   const totalFollowers = allChannels.reduce((s, ch) => s + getFollowers(ch), 0);
@@ -947,8 +1101,8 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   if (!pieData.length) pieData.push({ name: "—", value: 1, color: "#333" });
 
   return (
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-      <div className="topbar">
+    <div style={{ width: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="topbar" style={{ flexShrink: 0 }}>
         <span className="topbar-title">SOCIAL MEDIA ANALYTICS</span>
         <div className="tr" style={{ alignItems: "center", gap: 12 }}>
           {syncing && (
@@ -969,7 +1123,8 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
           <button className="ibtn" onClick={onAccounts}>Accounts</button>
         </div>
       </div>
-      <div className="page" style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
+      <div className="page" style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ flexShrink: 0 }}>
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
           {[
             {l:"Total Views",v:totalViews,s:"All platforms",mag:1e7},
@@ -998,127 +1153,6 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
             <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval"><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /></div><div className="ksub">{k.s}</div></div>
           ))}
         </div>
-
-        <div className="g3" style={{visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
-          <div className="panel" style={{display:"flex",flexDirection:"column"}}>
-            <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
-              <span className="ptitle">DAILY GROWTH</span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    className={`tbtn ${dailyGrowthRange === o.id ? "act" : ""}`}
-                    style={{ fontSize: 10, padding: "3px 8px" }}
-                    onClick={() => persistDailyGrowthRange(o.id)}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {viewsData.length > 0 ? (
-              <div style={{flex:1,minHeight:0}}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
-                  <defs>
-                    <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25}/>
-                      <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="activityRaw"
-                    ticks={dailyGrowthXTicks}
-                    tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
-                    tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
-                    axisLine={false}
-                    tickLine={false}
-                    height={26}
-                  />
-                  <YAxis
-                    domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
-                    tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={fmtWhole}
-                    width={40}
-                  />
-                  <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
-                  <Area
-                    type="monotone"
-                    dataKey="views"
-                    stroke="#ff6b6b"
-                    strokeWidth={2}
-                    fill="url(#gv)"
-                    name="Daily growth"
-                    dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
-                    activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
-                    isAnimationActive={false}
-                  >
-                    <LabelList
-                      dataKey="views"
-                      position="top"
-                      offset={4}
-                      formatter={(v) => fmtWhole(v)}
-                      style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
-                    />
-                  </Area>
-                  {reliableSnapshotLineX && (
-                    <ReferenceLine
-                      x={reliableSnapshotLineX}
-                      stroke="rgba(245,242,237,0.45)"
-                      strokeWidth={1}
-                      strokeDasharray="4 4"
-                      isFront
-                    />
-                  )}
-                </AreaChart>
-              </ResponsiveContainer>
-              </div>
-            ) : (
-              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Need 2+ days of data.</div>
-            )}
-          </div>
-          <div className="panel" style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
-            <div className="ptitle" style={{alignSelf:"stretch",marginBottom:4,flexShrink:0}}>PLATFORM SPLIT</div>
-            <div style={{flex:1,minHeight:0,width:"100%"}}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={pieData} dataKey="value" cx="50%" cy="50%" innerRadius="58%" outerRadius="80%" strokeWidth={0}
-                  label={({name,percent,cx,cy,midAngle,innerRadius,outerRadius})=>{
-                    const R=Math.PI/180; const r=(innerRadius+outerRadius)/2+12;
-                    const x=cx+r*Math.cos(-midAngle*R), y=cy+r*Math.sin(-midAngle*R);
-                    return <text x={x} y={y} fill="#f5f2ed" textAnchor="middle" dominantBaseline="central" style={{fontSize:11,fontFamily:"DM Mono",fontWeight:500}}>{name} {(percent*100).toFixed(0)}%</text>;
-                  }} labelLine={false}
-                >
-                  {pieData.map((d,i) => <Cell key={i} fill={d.color}/>)}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-            </div>
-          </div>
-          <div className="panel top-posts-panel" style={{display:"flex",flexDirection:"column"}}>
-            <div className="ptitle" style={{marginBottom:6,flexShrink:0}}>TOP POSTS</div>
-            <div className="top-posts-list" style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:4,minHeight:0}}>
-              {(() => {
-                const ranked = [...allPosts].sort((a,b) => b.views - a.views);
-                if (!ranked.length) return <div style={{fontSize:10,color:"var(--text3)",padding:"8px 0"}}>Sync an account to see top posts</div>;
-                return ranked.map((p,i) => (
-                  <div key={p.id} className="top-post-row" style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:3,padding:"6px 8px",borderLeft:`3px solid ${p.plat==="tt"?"#69c9d0":p.plat==="ig"?"#E1306C":"var(--red)"}`,flexShrink:0}}>
-                    <div style={{display:"flex",alignItems:"baseline",gap:5}}>
-                      <span style={{fontFamily:"var(--display)",fontSize:13,color:"var(--text3)",minWidth:14}}>#{i+1}</span>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:9,color:"var(--text3)"}}>{p._brand} · {p.plat==="tt"?"🎵":p.plat==="ig"?"📷":"▶️"}</div>
-                        <div style={{fontSize:10,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.cap}</div>
-                      </div>
-                      <span style={{fontFamily:"var(--display)",fontSize:14,color:"var(--text)",flexShrink:0}}>{fmt(p.views)}</span>
-                    </div>
-                  </div>
-                ));
-              })()}
-            </div>
-          </div>
         </div>
 
         <div
@@ -1126,102 +1160,208 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
             visibility: showChartsAndBrands ? "visible" : "hidden",
             opacity: showChartsAndBrands ? 1 : 0,
             transition: "opacity 0.25s",
-            flexShrink: 0,
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
-          <WeekdayGrowthPanel
-            data={weekdayGrowthData}
-            height={188}
-              emptyHint="No data yet."
-          />
-        </div>
-
-        <div className="sh" style={{marginBottom:6,flexShrink:0,visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
-          <span className="sht">BRANDS</span>
-          <span style={{fontFamily:"DM Mono",fontSize:9,color:"var(--text3)"}}>{(brandsFromDb||[]).length} brands</span>
-        </div>
-
-        <div className="bgrid" style={{flex:1,minHeight:0,overflowY:"auto",alignContent:"start",visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
-          {!(brandsFromDb||[]).length ? (
-            <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--text3)",border:"1px dashed var(--border2)",borderRadius:5}}>
-              <div style={{fontSize:14,marginBottom:8}}>No brands yet</div>
-              <div style={{fontSize:11}}>Go to <strong>Accounts</strong> → create a brand and sync accounts</div>
-            </div>
-          ) : (brandsFromDb||[]).map(b => {
-            const allHandles = b.handles;
-            const chData = allHandles.map(h => channelData[h]).filter(Boolean);
-            const brandFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
-            const brandViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
-            const thumbs = getAllBrandThumbs(b, channelData);
-            const hasData = chData.length > 0;
-            const allInactive = allHandles.length > 0 && allHandles.every(h => b.handleStatus?.[h] === false);
-            const hasTT = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "tiktok");
-            const hasYT = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "youtube");
-            const hasIG = allHandles.some(h => (h.includes("::") ? h.split("::")[1] : "youtube") === "instagram");
-            const cols = [];
-            if (hasTT) cols.push({ pt: "tiktok", name: "TikTok" });
-            if (hasYT) cols.push({ pt: "youtube", name: "YouTube" });
-            if (hasIG) cols.push({ pt: "instagram", name: "Instagram" });
-            const boxStyle = { flex: "0 0 calc((100% - 16px) / 3)", minWidth: 0 };
-            return (
-              <div key={b.id} className={`bcard${!hasData?" dead":""}`} onClick={() => onBrand(b.id)}>
-                <div className="bcard-top">
-                  <div style={{display:"flex",alignItems:"center",gap:9}}>
-                    <Pfp srcs={thumbs} size={32} name={b.name}/>
-                    <span className="bcard-name">{b.name}</span>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    {hasData && (
-                      <div style={{display:"flex",alignItems:"baseline",gap:12}}>
-                        <div style={{textAlign:"center"}}>
-                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandFollowers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} skipAnimation={skipNumberAnim} /></div>
-                          <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
-                        </div>
-                        <div style={{textAlign:"center"}}>
-                          <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}><RollingNumber value={brandViews} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /></div>
-                          <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
-                        </div>
-                      </div>
-                    )}
-                    <span className={`bstatus ${allInactive?"s-dead":hasData?"s-active":"s-dead"}`}>{allInactive?"inactive":hasData?"active":"sync needed"}</span>
-                  </div>
+          <div className="ov-dg-row">
+            <div className="panel" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+              <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
+                <span className="ptitle">DAILY GROWTH</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                  {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      className={`tbtn ${dailyGrowthRange === o.id ? "act" : ""}`}
+                      style={{ fontSize: 10, padding: "3px 8px" }}
+                      onClick={() => persistDailyGrowthRange(o.id)}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
                 </div>
-                {cols.length > 0 && (
-                <div className="bcard-platforms" style={{display:"flex",justifyContent:"center",flexWrap:"wrap",gap:8,marginTop:8}}>
-                  {cols.map(({ pt, name }) => {
-                    const ptHandles = allHandles.filter(h => (h.includes("::") ? h.split("::")[1] : "youtube") === pt);
-                    const ptChData = ptHandles.map(h => channelData[h]).filter(Boolean);
-                    const followers = ptChData.reduce((s, c) => s + getFollowers(c), 0);
-                    const views = ptChData.reduce((s, c) => s + (c.totalViews || 0), 0);
-                    const ptBadges = ptHandles.map(key => ({ key, isActive: b.handleStatus?.[key] !== false }));
-                    return (
-                      <div key={pt} style={{...boxStyle,display:"flex",flexDirection:"column",alignItems:"center",padding:"8px 6px",background:"var(--surface2)",borderRadius:4,border:"1px solid var(--border)"}}>
-                        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,marginBottom:6}}>
-                          <span style={{fontFamily:"var(--mono)",fontSize:9,color:"var(--text3)"}}>{name}</span>
-                          <div style={{display:"flex",gap:3,flexShrink:0}}>
-                            {ptBadges.map(({ key, isActive }) => (
-                              <span key={key} style={{fontSize:7,padding:"1px 4px",borderRadius:2,background:isActive?"var(--green-dim)":"var(--red-dim)",color:isActive?"var(--green)":"var(--red)"}}>{isActive?"active":"inactive"}</span>
-                            ))}
-                          </div>
-                        </div>
-                        <div style={{display:"flex",width:"100%",alignItems:"baseline"}}>
-                          <div style={{flex:1,textAlign:"center",paddingRight:8,borderRight:"1px solid var(--border2)"}}>
-                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={followers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} skipAnimation={skipNumberAnim} /> : "—"}</div>
-                            <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>flw</div>
-                          </div>
-                          <div style={{flex:1,textAlign:"center",paddingLeft:8}}>
-                            <div style={{fontFamily:"var(--display)",fontSize:17,color:"var(--text)",lineHeight:1.2}}>{ptChData.length ? <RollingNumber value={views} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /> : "—"}</div>
-                            <div style={{fontFamily:"var(--mono)",fontSize:7,color:"var(--text3)"}}>views</div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                )}
               </div>
-            );
-          })}
+              {viewsData.length > 0 ? (
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
+                      <defs>
+                        <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis
+                        dataKey="activityRaw"
+                        ticks={dailyGrowthXTicks}
+                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                        tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
+                        axisLine={false}
+                        tickLine={false}
+                        height={26}
+                      />
+                      <YAxis
+                        domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
+                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={fmtWhole}
+                        width={40}
+                      />
+                      <Tooltip content={<TTip />} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                      <Area
+                        type="monotone"
+                        dataKey="views"
+                        stroke="#ff6b6b"
+                        strokeWidth={2}
+                        fill="url(#gv)"
+                        name="Daily growth"
+                        dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
+                        activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
+                        isAnimationActive={false}
+                      >
+                        <LabelList
+                          dataKey="views"
+                          position="top"
+                          offset={4}
+                          formatter={(v) => fmtWhole(v)}
+                          style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
+                        />
+                      </Area>
+                      {reliableSnapshotLineX && (
+                        <ReferenceLine
+                          x={reliableSnapshotLineX}
+                          stroke="rgba(245,242,237,0.45)"
+                          strokeWidth={1}
+                          strokeDasharray="4 4"
+                          isFront
+                        />
+                      )}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 12 }}>Need 2+ days of data.</div>
+              )}
+            </div>
+            <WeekdayGrowthPanel
+              data={weekdayGrowthData}
+              height={200}
+              fillHeight
+              emptyHint="No data yet."
+              panelStyle={{ marginBottom: 0, height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}
+            />
+          </div>
+
+          <div className="ov-brands-split">
+            {!brandsList.length ? (
+              <div style={{ gridColumn: "1 / -1", gridRow: "1 / -1", textAlign: "center", padding: 40, color: "var(--text3)", border: "1px dashed var(--border2)", borderRadius: 5 }}>
+                <div style={{ fontSize: 14, marginBottom: 8 }}>No brands yet</div>
+                <div style={{ fontSize: 11 }}>
+                  Go to <strong>Accounts</strong> → create a brand and sync accounts
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="ov-brands-split-corner" aria-hidden />
+                <div className="sh ov-brands-header-cols" style={{ marginBottom: 0 }}>
+                  <span className="sht">BRANDS</span>
+                  <span style={{ fontFamily: "DM Mono", fontSize: 9, color: "var(--text3)" }}>{brandsList.length} brands</span>
+                </div>
+                <div className="ov-pie-posts-stack">
+                  <div className="panel" style={{ display: "flex", flexDirection: "column", alignItems: "stretch", flex: "0 0 auto", flexShrink: 0, minHeight: 200 }}>
+                    <div className="ptitle" style={{ alignSelf: "stretch", marginBottom: 4, flexShrink: 0 }}>PLATFORM SPLIT</div>
+                    <div style={{ flex: 1, minHeight: 160, width: "100%" }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            dataKey="value"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius="58%"
+                            outerRadius="80%"
+                            strokeWidth={0}
+                            label={({ name, percent, value, cx, cy, midAngle, innerRadius, outerRadius }) => {
+                              const R = Math.PI / 180;
+                              const r = (innerRadius + outerRadius) / 2 + 12;
+                              const x = cx + r * Math.cos(-midAngle * R);
+                              const y = cy + r * Math.sin(-midAngle * R);
+                              const pct = (percent * 100).toFixed(0);
+                              const num = fmtWhole(value);
+                              return (
+                                <text
+                                  x={x}
+                                  y={y}
+                                  fill="#f5f2ed"
+                                  textAnchor="middle"
+                                  dominantBaseline="central"
+                                  style={{ fontSize: 11, fontFamily: "DM Mono", fontWeight: 500 }}
+                                >
+                                  {name} {pct}% {num}
+                                </text>
+                              );
+                            }}
+                            labelLine={false}
+                          >
+                            {pieData.map((d, i) => (
+                              <Cell key={i} fill={d.color} />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="panel top-posts-panel ov-top-posts-panel">
+                    <div className="ptitle" style={{ marginBottom: 6, flexShrink: 0 }}>TOP POSTS</div>
+                    <div className="top-posts-list ov-top-posts-list" style={{ WebkitOverflowScrolling: "touch" }}>
+                      {(() => {
+                        const ranked = [...allPosts].sort((a, b) => b.views - a.views);
+                        if (!ranked.length) return <div style={{ fontSize: 10, color: "var(--text3)", padding: "4px 0" }}>Sync an account to see top posts</div>;
+                        return ranked.map((p, i) => (
+                          <div
+                            key={p.id}
+                            className="top-post-row top-post-row-compact"
+                            style={{
+                              background: "var(--surface2)",
+                              border: "1px solid var(--border)",
+                              borderLeft: `3px solid ${p.plat === "tt" ? "#69c9d0" : p.plat === "ig" ? "#E1306C" : "var(--red)"}`,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                              <span style={{ fontFamily: "var(--display)", fontSize: 11, color: "var(--text3)", minWidth: 12, lineHeight: 1.2 }}>
+                                #{i + 1}
+                              </span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="tpr-meta" style={{ fontSize: 8, color: "var(--text3)", lineHeight: 1.15 }}>
+                                  {p._brand} · {p.plat === "tt" ? "🎵" : p.plat === "ig" ? "📷" : "▶️"}
+                                </div>
+                                <div className="tpr-cap" style={{ color: "var(--text)" }}>{p.cap}</div>
+                              </div>
+                              <span style={{ fontFamily: "var(--display)", fontSize: 12, color: "var(--text)", flexShrink: 0, lineHeight: 1.2 }}>{fmt(p.views)}</span>
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+                <div className="ov-brand-col ov-brand-col--a">
+                  {brandsColLeft.map((b) => (
+                    <OverviewBrandCard key={b.id} b={b} channelData={channelData} onBrand={onBrand} dataReady={dataReady} skipNumberAnim={skipNumberAnim} />
+                  ))}
+                </div>
+                <div className="ov-brand-col ov-brand-col--b">
+                  {brandsColRight.map((b) => (
+                    <OverviewBrandCard key={b.id} b={b} channelData={channelData} onBrand={onBrand} dataReady={dataReady} skipNumberAnim={skipNumberAnim} />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1331,7 +1471,10 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
-  const weekdayGrowthData = useMemo(() => buildWeekdayGrowthChartData(viewsData), [viewsData]);
+  const weekdayGrowthData = useMemo(
+    () => buildWeekdayGrowthChartData(filterViewsDataReliableOnly(viewsData)),
+    [viewsData]
+  );
 
   const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
 
@@ -1371,81 +1514,95 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
               ))}
             </div>
 
-            <div className="panel" style={{marginBottom:14}}>
-              <div className="ph" style={{ flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
-                <span className="ptitle">DAILY GROWTH</span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                  {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      className={`tbtn ${dailyGrowthRange === o.id ? "act" : ""}`}
-                      style={{ fontSize: 10, padding: "3px 8px" }}
-                      onClick={() => persistDailyGrowthRange(o.id)}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
+            <div className="ov-dg-row" style={{ marginBottom: 14 }}>
+              <div className="panel" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+                <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
+                  <span className="ptitle">DAILY GROWTH</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                    {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={`tbtn ${dailyGrowthRange === o.id ? "act" : ""}`}
+                        style={{ fontSize: 10, padding: "3px 8px" }}
+                        onClick={() => persistDailyGrowthRange(o.id)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {viewsData.length > 0 ? (
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
+                        <defs>
+                          <linearGradient id="gv-brand" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <XAxis
+                          dataKey="activityRaw"
+                          ticks={dailyGrowthXTicks}
+                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                          tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
+                          axisLine={false}
+                          tickLine={false}
+                          height={26}
+                        />
+                        <YAxis
+                          domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
+                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={fmtWhole}
+                          width={40}
+                        />
+                        <Tooltip content={<TTip />} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                        <Area
+                          type="monotone"
+                          dataKey="views"
+                          stroke="#ff6b6b"
+                          strokeWidth={2}
+                          fill="url(#gv-brand)"
+                          name="Views"
+                          dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
+                          activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
+                          isAnimationActive={false}
+                        >
+                          <LabelList
+                            dataKey="views"
+                            position="top"
+                            offset={4}
+                            formatter={(v) => fmtWhole(v)}
+                            style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
+                          />
+                        </Area>
+                        {reliableSnapshotLineX && (
+                          <ReferenceLine
+                            x={reliableSnapshotLineX}
+                            stroke="rgba(245,242,237,0.45)"
+                            strokeWidth={1}
+                            strokeDasharray="4 4"
+                            isFront
+                          />
+                        )}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 12 }}>Need 2+ days of data.</div>
+                )}
               </div>
-              {viewsData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={182}>
-                  <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
-                    <defs>
-                      <linearGradient id="gv-brand" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25}/>
-                        <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <XAxis
-                      dataKey="activityRaw"
-                      ticks={dailyGrowthXTicks}
-                      tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
-                      tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
-                      axisLine={false}
-                      tickLine={false}
-                      height={26}
-                    />
-                    <YAxis
-                      domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
-                      tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={fmtWhole}
-                      width={40}
-                    />
-                    <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
-                    <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv-brand)" name="Views" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}>
-                      <LabelList
-                        dataKey="views"
-                        position="top"
-                        offset={4}
-                        formatter={(v) => fmtWhole(v)}
-                        style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
-                      />
-                    </Area>
-                    {reliableSnapshotLineX && (
-                      <ReferenceLine
-                        x={reliableSnapshotLineX}
-                        stroke="rgba(245,242,237,0.45)"
-                        strokeWidth={1}
-                        strokeDasharray="4 4"
-                        isFront
-                      />
-                    )}
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div style={{height:182,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>Need 2+ days of data.</div>
-              )}
+              <WeekdayGrowthPanel
+                data={weekdayGrowthData}
+                height={268}
+                fillHeight
+                emptyHint="No data yet."
+                panelStyle={{ marginBottom: 0, height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}
+              />
             </div>
-
-            <WeekdayGrowthPanel
-              data={weekdayGrowthData}
-              height={168}
-              emptyHint="No data yet."
-              panelStyle={{ marginBottom: 14 }}
-            />
 
             {actualTab !== "all" && posts.length > 0 && (
               <div className="panel">
@@ -1738,10 +1895,7 @@ export default function App() {
       const concurrency = isMobile ? 6 : 12;
       await runWithConcurrency(keys, concurrency, (key) => {
         const { handle, platform } = pk(key);
-        const anyActive = brandsData.some(
-          (b) => (b.handles || []).includes(key) && b.handleStatus?.[key] !== false
-        );
-        return fetchChannel(handle, platform, false, false, { skipDailySnapshot: !anyActive }).catch(() => null);
+        return fetchChannel(handle, platform, false, false).catch(() => null);
       });
     };
     if (isSupabaseConfigured()) {
@@ -1785,7 +1939,7 @@ export default function App() {
     const { handle, platform } = pk(key);
     if (isSupabaseConfigured()) await dbToggleChannelActive(brandId, handle, platform, active);
     // Keep last-known stats in memory when deactivating; do not clear channelData.
-    if (active) fetchChannel(handle, platform, true, false, { skipDailySnapshot: false }).catch(() => {});
+    if (active) fetchChannel(handle, platform, true, false).catch(() => {});
     setBrands(prev => {
       const n = prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b);
       if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(n)); } catch {}
@@ -2040,7 +2194,11 @@ export default function App() {
             </div>
             <span className="mobile-topbar-title">{pageTitle}</span>
           </div>
-          {page === "overview" && <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} syncProgress={syncProgress} syncElapsed={syncElapsed} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")}/>}
+          {page === "overview" && (
+            <div className="overview-host" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
+              <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} syncProgress={syncProgress} syncElapsed={syncElapsed} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")} />
+            </div>
+          )}
           {page === "matchmax" && (
             <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
               <div className="topbar">

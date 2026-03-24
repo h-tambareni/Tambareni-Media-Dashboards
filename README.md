@@ -59,7 +59,7 @@ The app uses [ScrapeCreators](https://docs.scrapecreators.com) for YouTube and T
 
 ## Daily Growth Chart & 11 PM ET Cron
 
-The **Daily Growth** chart uses `daily_snapshots` in Supabase. Data is written **only** by the 11 PM ET daily-sync cron—not by Sync All or manual syncs. This ensures a true 24-hour cadence for the chart.
+The **Daily Growth** chart uses `daily_snapshots` in Supabase. Rows are written **only** by the **`daily-sync` Edge Function** (nightly via pg_cron for every active row in `brand_channels`). You can **insert** multiple rows for the same UTC calendar day (e.g. testing re-runs); the **dashboard uses the latest row per day** (`created_at`). The web app **reads** this table only.
 
 ### Server-side cron (Supabase native – no external tools)
 

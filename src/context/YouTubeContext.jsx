@@ -1,7 +1,7 @@
 /**
  * Platform context — fetches channel + video data via ScrapeCreators API + Instagram Edge Functions.
  * Supports YouTube, TikTok, and Instagram. Caches snapshots in Supabase channel_cache.
- * Stores daily view totals for views-over-time chart.
+ * Daily Growth reads `daily_snapshots` from Supabase (written only by the nightly `daily-sync` cron — not on app sync).
  *
  * channelData keys use composite format: "handle::platform"
  */
@@ -11,20 +11,12 @@ import { fetchInstagramDirect, getInstagramToken } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
-  upsertChannelCache, deleteChannelCache, fetchDailySnapshots, upsertDailySnapshot,
+  upsertChannelCache, deleteChannelCache, fetchDailySnapshots,
   updateBrandChannelYoutubeId, ck, pk,
 } from "../lib/supabaseDb";
 
 const PlatformContext = createContext(null);
 const inFlight = new Map();
-
-function snapshotFieldsFromEntry(entry) {
-  return {
-    totalViews: entry.totalViews ?? 0,
-    followers: entry.platform?.followers ?? entry.channel?.subscribers ?? 0,
-    videoCount: entry.channel?.videoCount ?? entry.posts?.length ?? 0,
-  };
-}
 
 export function YouTubeProvider({ children }) {
   const apiKey = import.meta.env.VITE_SCRAPECREATORS_API_KEY || "";
@@ -52,7 +44,6 @@ export function YouTubeProvider({ children }) {
       if (existing) return existing;
 
       const doFetch = async () => {
-        const skipDailySnapshot = opts.skipDailySnapshot === true;
         try {
           // One cache read per channel. Stale-while-revalidate: paint last snapshot immediately, then refresh.
           let cached = null;
@@ -139,8 +130,7 @@ export function YouTubeProvider({ children }) {
               let dailyViews = [];
               if (isSupabaseConfigured()) {
                 const hSnap = entry?.channel?.handle || entry?.platform?.handle || handle;
-                if (!skipDailySnapshot) await upsertDailySnapshot(hSnap, plat, snapshotFieldsFromEntry(entry)).catch(() => {});
-                dailyViews = (await fetchDailySnapshots(handle, plat)).map(row => ({
+                dailyViews = (await fetchDailySnapshots(hSnap, plat)).map(row => ({
                   d: formatChartDate(row.snapshot_date),
                   raw: row.snapshot_date,
                   views: row.total_views,
@@ -230,8 +220,8 @@ export function YouTubeProvider({ children }) {
           };
           let dailyViews = [];
           if (isSupabaseConfigured()) {
-            if (!skipDailySnapshot) await upsertDailySnapshot(ch?.handle || handle, plat, snapshotFieldsFromEntry(pendingForSnapshot)).catch(() => {});
-            dailyViews = (await fetchDailySnapshots(handle, plat)).map(row => ({
+            const snapHandle = ch?.handle || handle;
+            dailyViews = (await fetchDailySnapshots(snapHandle, plat)).map(row => ({
               d: formatChartDate(row.snapshot_date),
               raw: row.snapshot_date,
               views: row.total_views,
@@ -289,7 +279,6 @@ export function YouTubeProvider({ children }) {
           let entry = r.entry;
           if (isSupabaseConfigured()) {
             const { handle, platform } = pk(key);
-            await upsertDailySnapshot(handle, platform, snapshotFieldsFromEntry(entry)).catch(() => {});
             const dailyRows = await fetchDailySnapshots(handle, platform);
             entry = {
               ...entry,

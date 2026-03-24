@@ -1,13 +1,26 @@
 // Daily sync – writes `daily_snapshots` (cumulative total_views) for the Daily Growth chart.
-// Invoked by pg_cron (schedules are UTC — see supabase/migrations/*_daily_sync*.sql). Typical target
-// is ~midnight US Eastern; confirm the active expression in Supabase (Database → Cron / `cron.job`).
+//
+// INSERT each run. Multiple rows per UTC calendar day are allowed (e.g. testing). The dashboard uses the
+// latest row per day (`created_at`) when building charts.
+//
+// Invoked by pg_cron (schedules are UTC — see supabase/migrations/*_daily_sync*.sql).
 // Invoke manually: GET/POST https://[project].supabase.co/functions/v1/daily-sync?secret=YOUR_CRON_SECRET
+// Response body `results[]` has per-channel ok/err/warnings/total_views for visibility (check Edge Function logs + JSON).
+//
 // Set CRON_SECRET in Supabase Edge Function secrets
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SC_BASE = "https://api.scrapecreators.com";
 const IG_API = "https://graph.instagram.com/v25.0";
 const cors = { "Access-Control-Allow-Origin": "*" };
+
+type ChannelResult = {
+  key: string;
+  ok: boolean;
+  total_views?: number;
+  err?: string;
+  warnings?: string[];
+};
 
 /** DB `active` must be treated as inactive only when explicitly false (boolean or legacy string). */
 function isChannelRowActive(active: unknown): boolean {
@@ -20,6 +33,15 @@ function isChannelRowActive(active: unknown): boolean {
     if (s === "true" || s === "1" || s === "t") return true;
   }
   return true;
+}
+
+async function readBodySnippet(res: Response): Promise<string> {
+  try {
+    const t = await res.text();
+    return t.slice(0, 500);
+  } catch {
+    return "";
+  }
 }
 
 Deno.serve(async (req) => {
@@ -47,7 +69,6 @@ Deno.serve(async (req) => {
     const { data: channelsRaw } = await supabase
       .from("brand_channels")
       .select("channel_handle, platform, instagram_access_token, instagram_user_id, active");
-    // Never sync deactivated accounts (.or() alone can miss edge cases; inactive must never run).
     const channels = (channelsRaw || []).filter((r: { active?: unknown }) => isChannelRowActive(r.active));
     const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string; instagramUserId?: string }>();
     (channels || []).forEach((r: any) => {
@@ -74,16 +95,17 @@ Deno.serve(async (req) => {
       }
     });
 
-    const results: { key: string; ok: boolean; err?: string }[] = [];
+    const results: ChannelResult[] = [];
 
     for (const { handle, platform, instagramAccessToken, instagramUserId } of unique.values()) {
+      const key = `${handle}::${platform}`;
+      const warnings: string[] = [];
       try {
         let totalViews = 0;
         let followers = 0;
         let videoCount = 0;
 
         if (platform === "instagram") {
-          // Never use "first token in map" for a different handle — that wrote the SAME /me metrics under every row (wrong numbers + duplicates).
           const token = instagramAccessToken || igTokenMap[handle];
           let me: { id?: string; username?: string; followers_count?: number; media_count?: number; error?: { message?: string } } | null = null;
           if (token) {
@@ -91,6 +113,9 @@ Deno.serve(async (req) => {
               `${IG_API}/me?fields=id,username,followers_count,media_count&access_token=${token}`,
             );
             me = await meRes.json();
+            if (!meRes.ok) {
+              throw new Error(`Instagram /me HTTP ${meRes.status}: ${me?.error?.message || (await readBodySnippet(meRes))}`);
+            }
           }
           const tokenMatchesHandle =
             me &&
@@ -101,7 +126,6 @@ Deno.serve(async (req) => {
             );
 
           if (tokenMatchesHandle && me?.id) {
-            // Must match instagram-fetch: first page of media, insights on first 25 items (same totalViews as dashboard KPI).
             followers = me.followers_count ?? 0;
             videoCount = me.media_count ?? 0;
             const userId = me.id;
@@ -109,39 +133,66 @@ Deno.serve(async (req) => {
               `${IG_API}/${userId}/media?fields=id,media_type&limit=50&access_token=${token}`,
             );
             const mediaData = await mediaRes.json();
+            if (!mediaRes.ok) {
+              throw new Error(`Instagram media list HTTP ${mediaRes.status}: ${mediaData?.error?.message || ""}`);
+            }
             if (mediaData.error) throw new Error(mediaData.error.message);
             const mediaList = mediaData.data || [];
+            let insightFailures = 0;
+            let videoReelInBatch = 0;
+            let videoReelInsightFails = 0;
             for (const m of mediaList.slice(0, 25)) {
               const mt = (m.media_type || "").toUpperCase();
-              const metrics =
-                mt === "VIDEO" || mt === "REELS" ? "views,likes,comments" : "likes,comments";
-              try {
-                const insRes = await fetch(`${IG_API}/${m.id}/insights?metric=${metrics}&access_token=${token}`);
-                const insData = await insRes.json();
-                const byName: Record<string, number> = {};
-                (insData.data || []).forEach((d: { name: string; values: { value: string }[] }) => {
-                  byName[d.name] = parseInt(d.values?.[0]?.value || "0", 10);
-                });
-                totalViews += byName.views ?? 0;
-              } catch {}
+              const wantsViews = mt === "VIDEO" || mt === "REELS";
+              if (wantsViews) videoReelInBatch++;
+              const metrics = wantsViews ? "views,likes,comments" : "likes,comments";
+              const insRes = await fetch(`${IG_API}/${m.id}/insights?metric=${metrics}&access_token=${token}`);
+              const insData = await insRes.json();
+              if (!insRes.ok || insData.error) {
+                insightFailures++;
+                if (wantsViews) videoReelInsightFails++;
+                const msg = insData?.error?.message || `HTTP ${insRes.status}`;
+                console.warn(`[daily-sync] ${key} IG insight media=${m.id}: ${msg}`);
+                continue;
+              }
+              const byName: Record<string, number> = {};
+              (insData.data || []).forEach((d: { name: string; values: { value: string }[] }) => {
+                byName[d.name] = parseInt(d.values?.[0]?.value || "0", 10);
+              });
+              totalViews += byName.views ?? 0;
+            }
+            if (videoReelInBatch > 0 && totalViews === 0 && videoReelInsightFails >= videoReelInBatch) {
+              throw new Error(
+                `Instagram Graph: all ${videoReelInsightFails} video/reel insight call(s) failed — refusing to store total_views=0`,
+              );
+            }
+            if (insightFailures > 0) {
+              warnings.push(`Instagram: ${insightFailures} insight request(s) failed (partial total)`);
             }
           } else {
             const profRes = await fetch(`${SC_BASE}/v1/instagram/profile?handle=${encodeURIComponent(handle)}`, { headers: { "x-api-key": scKey } });
             const profData = await profRes.json();
-            if (!profRes.ok) throw new Error(profData?.message || "API error");
+            if (!profRes.ok) throw new Error(profData?.message || `Instagram SC profile HTTP ${profRes.status}`);
             const user = profData?.data?.user || profData?.user || profData;
             const fb = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
             const mc = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
             followers = typeof fb === "number" ? fb : (fb?.count ?? 0);
             videoCount = typeof mc === "number" ? mc : (mc?.count ?? 0);
             let maxId: string | null = null;
+            let page = 0;
             for (let p = 0; p < 30; p++) {
               const postsUrl = new URL(`${SC_BASE}/v2/instagram/user/posts`);
               postsUrl.searchParams.set("handle", handle);
               if (maxId) postsUrl.searchParams.set("next_max_id", maxId);
               const postsRes = await fetch(postsUrl.toString(), { headers: { "x-api-key": scKey } });
               const postsData = await postsRes.json();
-              if (!postsRes.ok) break;
+              if (!postsRes.ok) {
+                if (page === 0) {
+                  throw new Error(`Instagram SC posts HTTP ${postsRes.status}: ${postsData?.message || (await readBodySnippet(postsRes))}`);
+                }
+                warnings.push(`Instagram SC posts page ${page} failed HTTP ${postsRes.status}, using partial sum`);
+                break;
+              }
               const items = postsData?.items || postsData?.data || [];
               for (const it of items) {
                 const b = it?.node || it;
@@ -150,6 +201,7 @@ Deno.serve(async (req) => {
               if (!postsData?.more_available || !items.length) break;
               maxId = postsData?.next_max_id ?? postsData?.cursor ?? null;
               if (!maxId) break;
+              page++;
             }
           }
         } else {
@@ -158,7 +210,7 @@ Deno.serve(async (req) => {
           const sp = new URLSearchParams(params).toString();
           const chRes = await fetch(`${SC_BASE}${path}?${sp}`, { headers: { "x-api-key": scKey } });
           const ch = await chRes.json();
-          if (!chRes.ok) throw new Error(ch?.message || "API error");
+          if (!chRes.ok) throw new Error(ch?.message || `SC channel HTTP ${chRes.status}`);
           if (platform === "tiktok") {
             const s = ch.stats || {};
             followers = s.followerCount ?? 0;
@@ -172,6 +224,10 @@ Deno.serve(async (req) => {
               if (ttcursor) vUrl.searchParams.set("max_cursor", ttcursor);
               const vRes = await fetch(vUrl.toString(), { headers: { "x-api-key": scKey } });
               const vData = await vRes.json();
+              if (!vRes.ok) {
+                const detail = vData?.message || (await readBodySnippet(vRes));
+                throw new Error(`TikTok videos page ${p} HTTP ${vRes.status}: ${detail}`);
+              }
               const chunk = vData.aweme_list || vData.videos || [];
               vlist.push(...chunk);
               const hasMore = vData.has_more === 1 || vData.has_more === true;
@@ -180,30 +236,54 @@ Deno.serve(async (req) => {
               ttcursor = next;
             }
             totalViews = vlist.reduce((sum: number, v: any) => sum + ((v.statistics?.play_count ?? v.stats?.play_count ?? v.play_count ?? 0) || 0), 0);
+            if (vlist.length === 0 && videoCount > 0) {
+              throw new Error(
+                `TikTok: profile reports videoCount=${videoCount} but /v3/tiktok/profile/videos returned 0 items — refusing to store total_views=0`,
+              );
+            }
+            if (totalViews === 0 && videoCount === 0) {
+              warnings.push("TikTok: total_views=0 (no videos / empty account)");
+            }
           } else {
             followers = ch.subscriberCount ?? 0;
             videoCount = ch.videoCount ?? 0;
             totalViews = ch.viewCount ?? 0;
+            if (totalViews === 0 && videoCount > 0) {
+              warnings.push("YouTube: viewCount=0 but videoCount>0 (API oddity or new channel)");
+            }
           }
         }
 
-        await supabase.from("daily_snapshots").upsert({
+        const row = {
           channel_handle: handle,
           platform,
           snapshot_date: today,
           total_views: totalViews,
           followers,
           video_count: videoCount,
-        }, { onConflict: "channel_handle,platform,snapshot_date" });
-        results.push({ key: `${handle}::${platform}`, ok: true });
+        };
+        const { error: insErr } = await supabase.from("daily_snapshots").insert(row);
+        if (insErr) throw new Error(`daily_snapshots insert: ${insErr.message}`);
+
+        const entry: ChannelResult = { key, ok: true, total_views: totalViews };
+        if (warnings.length) entry.warnings = warnings;
+        results.push(entry);
+        if (warnings.length) console.warn(`[daily-sync] ${key} ok with warnings:`, warnings.join("; "));
       } catch (e) {
-        results.push({ key: `${handle}::${platform}`, ok: false, err: String(e?.message || e) });
+        const msg = String((e as Error)?.message ?? e);
+        console.error(`[daily-sync] ${key} FAILED:`, msg);
+        results.push({ key, ok: false, err: msg });
       }
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    return Response.json({ ok: true, date: today, synced: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results }, { headers: cors });
+    const synced = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok).length;
+    console.log(`[daily-sync] date=${today} synced=${synced} failed=${failed}`);
+
+    return Response.json({ ok: true, date: today, synced, failed, results }, { headers: cors });
   } catch (e) {
+    console.error("[daily-sync] fatal:", e);
     return Response.json({ error: String(e) }, { status: 500, headers: cors });
   }
 });
