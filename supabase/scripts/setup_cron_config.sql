@@ -3,7 +3,7 @@
 -- =============================================================================
 --
 -- FLOW:
---   pg_cron (11:59 PM daily)
+--   pg_cron (UTC — see migrations; often targets ~midnight US Eastern)
 --     → reads cron_config.daily_sync_url
 --     → HTTP GET to that URL (your daily-sync Edge Function)
 --     → daily-sync reads cron_config.instagram_tokens (or INSTAGRAM_TOKENS secret)

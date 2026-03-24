@@ -1,5 +1,8 @@
--- Change daily sync to 11 PM Eastern Time
--- 04:00 UTC = 11 PM EST (winter) | 12 AM EDT (summer)
+-- pg_cron runs in UTC (not Eastern). This schedules daily-sync at 04:00 UTC.
+-- 04:00 UTC ≈ 12:00 AM Eastern during EDT (roughly Mar–Nov).
+-- 04:00 UTC ≈ 11:00 PM Eastern the *previous* calendar date during EST (roughly Nov–Mar).
+-- For ~midnight Eastern in EST as well, use 05:00 UTC instead: '0 5 * * *'.
+-- Verify the live job in Supabase Dashboard — your project may differ.
 do $$
 declare jid bigint;
 begin

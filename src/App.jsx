@@ -374,6 +374,59 @@ function formatAxisDateShort(raw) {
   return `${m}/${day}`;
 }
 
+/**
+ * Local calendar YYYY-MM-DD (not UTC). Mixing `setDate` + `toISOString().slice(0,10)` was shifting
+ * "yesterday" near timezone boundaries — same class of bug as excluding "today" from merges.
+ */
+function localYyyyMmDd(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function localYesterdayYyyyMmDd() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return localYyyyMmDd(d);
+}
+
+/** Previous local calendar day for YYYY-MM-DD (snapshot at midnight → growth = prior day). */
+function previousCalendarDay(yyyyMmDd) {
+  const parts = String(yyyyMmDd).slice(0, 10).split("-");
+  if (parts.length < 3) return yyyyMmDd;
+  const y = +parts[0];
+  const m = +parts[1];
+  const d = +parts[2];
+  if (!y || !m || !d) return yyyyMmDd;
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() - 1);
+  const y2 = dt.getFullYear();
+  const m2 = String(dt.getMonth() + 1).padStart(2, "0");
+  const d2 = String(dt.getDate()).padStart(2, "0");
+  return `${y2}-${m2}-${d2}`;
+}
+
+/** Map snapshot rows to chart rows: X-axis / labels = calendar day views were earned (day before snapshot date). */
+function annotateActivityDates(rows) {
+  return (rows || []).map((r) => {
+    const snap = r.raw;
+    if (!snap || typeof snap !== "string") {
+      return { ...r, activityRaw: snap, d: r.d };
+    }
+    const activityRaw = previousCalendarDay(snap);
+    return {
+      ...r,
+      activityRaw,
+      d: formatAxisDateShort(activityRaw),
+    };
+  });
+}
+
+function chartDayKey(r) {
+  return r?.activityRaw ?? r?.raw ?? "";
+}
+
 /** YYYY-MM-DD: dotted vertical line at this day (to the right = reliable 24h snapshots). VITE_RELIABLE_SNAPSHOTS_SINCE=none hides the line. */
 const RELIABLE_SNAPSHOTS_SINCE = (() => {
   const v = (import.meta.env.VITE_RELIABLE_SNAPSHOTS_SINCE ?? "").trim();
@@ -385,15 +438,15 @@ const RELIABLE_SNAPSHOTS_SINCE = (() => {
 function reliableSnapshotAxisX(viewsData) {
   if (!RELIABLE_SNAPSHOTS_SINCE || !viewsData?.length) return null;
   const row = viewsData.find((r) => r.raw === RELIABLE_SNAPSHOTS_SINCE);
-  return row?.raw ?? null;
+  return chartDayKey(row) || null;
 }
 
-/** ~10 readable X ticks; uses `raw` (YYYY-MM-DD) so labels stay unique across years. */
+/** ~10 readable X ticks; uses chart day key (activity calendar day). */
 function dailyGrowthXAxisTicks(rows) {
   if (!rows?.length) return undefined;
   const n = rows.length;
-  const first = rows[0].raw;
-  const last = rows[n - 1].raw;
+  const first = chartDayKey(rows[0]);
+  const last = chartDayKey(rows[n - 1]);
   if (!first || !last) return undefined;
   const spanDays = Math.max(1, (new Date(`${last}T12:00:00Z`) - new Date(`${first}T12:00:00Z`)) / 86400000);
   const TARGET = 10;
@@ -402,7 +455,7 @@ function dailyGrowthXAxisTicks(rows) {
   if (spanDays <= 120) {
     const step = Math.max(1, Math.ceil(n / TARGET));
     const out = [];
-    for (let i = 0; i < n; i += step) out.push(rows[i].raw);
+    for (let i = 0; i < n; i += step) out.push(chartDayKey(rows[i]));
     if (out[out.length - 1] !== last) out.push(last);
     return uniq(out);
   }
@@ -410,27 +463,28 @@ function dailyGrowthXAxisTicks(rows) {
   let lastYm = null;
   const monthTicks = [];
   for (const r of rows) {
-    const ym = r.raw.slice(0, 7);
+    const dayKey = chartDayKey(r);
+    const ym = dayKey.slice(0, 7);
     if (ym !== lastYm) {
       lastYm = ym;
-      monthTicks.push(r.raw);
+      monthTicks.push(dayKey);
     }
   }
   if (monthTicks.length <= TARGET + 2) {
     if (monthTicks[monthTicks.length - 1] !== last) monthTicks.push(last);
     return uniq(monthTicks);
   }
-  const k = Math.ceil(monthTicks.length / TARGET);
+  const mStep = Math.ceil(monthTicks.length / TARGET);
   const out = [];
-  for (let i = 0; i < monthTicks.length; i += k) out.push(monthTicks[i]);
+  for (let i = 0; i < monthTicks.length; i += mStep) out.push(monthTicks[i]);
   if (out[out.length - 1] !== last) out.push(last);
   return uniq(out);
 }
 
 function formatDailyGrowthXTick(raw, rows) {
   if (!raw || !rows?.length) return "";
-  const first = rows[0].raw;
-  const last = rows[rows.length - 1].raw;
+  const first = chartDayKey(rows[0]);
+  const last = chartDayKey(rows[rows.length - 1]);
   if (!first || !last) return formatAxisDateShort(raw);
   const t0 = new Date(`${first}T12:00:00Z`).getTime();
   const t1 = new Date(`${last}T12:00:00Z`).getTime();
@@ -484,7 +538,7 @@ function getDailyGrowthRangeCutoff(rangeId) {
   else if (rangeId === "1m") daysBack = 30;
   else if (rangeId === "1w") daysBack = 7;
   const d = new Date(now.getTime() - daysBack * 86400000);
-  return d.toISOString().slice(0, 10);
+  return localYyyyMmDd(d);
 }
 
 function filterDailyGrowthByRange(rows, rangeId) {
@@ -494,13 +548,53 @@ function filterDailyGrowthByRange(rows, rangeId) {
   return rows.filter((r) => (r.raw || "") >= cutoff);
 }
 
-function buildDailyGrowthSeriesFromChannels(channels, todayStr) {
+const WEEKDAY_SHORT_MON = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** Local calendar weekday from YYYY-MM-DD (matches how chart dates are interpreted). */
+function weekdayIndexLocal(raw) {
+  if (!raw || typeof raw !== "string") return 0;
+  const parts = raw.slice(0, 10).split("-").map(Number);
+  const [y, m, d] = parts;
+  if (!y || !m || !d) return 0;
+  return new Date(y, m - 1, d).getDay();
+}
+
+/** Map Sun=0..Sat=6 → Mon=0 .. Sun=6 */
+function mondayFirstSlot(jsWeekday) {
+  return jsWeekday === 0 ? 6 : jsWeekday - 1;
+}
+
+/**
+ * Average daily growth (views) per weekday from the same rows as Daily Growth.
+ * Buckets by the calendar day views were earned (activity day), not snapshot DB date.
+ */
+function buildWeekdayGrowthChartData(rows) {
+  const bins = Array.from({ length: 7 }, () => ({ sum: 0, n: 0 }));
+  for (const row of rows || []) {
+    const dayKey = chartDayKey(row);
+    if (!dayKey) continue;
+    const v = Math.max(0, Number(row.views) || 0);
+    const slot = mondayFirstSlot(weekdayIndexLocal(dayKey));
+    bins[slot].sum += v;
+    bins[slot].n += 1;
+  }
+  return bins.map((b, i) => ({
+    name: WEEKDAY_SHORT_MON[i],
+    avg: b.n > 0 ? Math.round(b.sum / b.n) : 0,
+    total: b.sum,
+    days: b.n,
+  }));
+}
+
+/** Merge per-channel daily growth into one series. Include today's snapshot row so the latest
+ * activity day (e.g. "yesterday" after midnight cron) can render — skipping "today" dropped that delta.
+ */
+function buildDailyGrowthSeriesFromChannels(channels) {
   const fmtD = formatAxisDateShort;
   const byDate = {};
   (channels || []).forEach((ch) => {
     channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
       const key = row.raw || row.d;
-      if (key === todayStr) return;
       if (!byDate[key]) byDate[key] = { d: fmtD(key), raw: key, dailyGrowth: 0 };
       byDate[key].dailyGrowth += dailyGrowth;
     });
@@ -514,9 +608,7 @@ function buildDailyGrowthSeriesFromChannels(channels, todayStr) {
   });
   if (sorted.length === 1) {
     const d0 = sorted[0].raw || "";
-    const prev = new Date(d0 ? d0 + "T12:00:00Z" : Date.now());
-    prev.setDate(prev.getDate() - 1);
-    const prevStr = prev.toISOString().slice(0, 10);
+    const prevStr = d0 ? previousCalendarDay(d0) : localYesterdayYyyyMmDd();
     sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
   }
   return fillDailyGrowthGaps(sorted);
@@ -528,7 +620,7 @@ function fillDailyGrowthGaps(sorted) {
   const byRaw = Object.fromEntries(sorted.map(r => [r.raw, r]));
   let first = sorted[0].raw;
   let last = sorted[sorted.length - 1].raw;
-  const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+  const yesterday = localYesterdayYyyyMmDd();
   if (last < yesterday) last = yesterday;
   const result = [];
   let prevCum = 0;
@@ -558,7 +650,15 @@ const TTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   const displayLabel =
     typeof label === "string" && /^\d{4}-\d{2}-\d{2}$/.test(label)
-      ? new Date(`${label}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })
+      ? (() => {
+          const [y, mo, da] = label.slice(0, 10).split("-").map(Number);
+          return new Date(y, mo - 1, da).toLocaleDateString(undefined, {
+            weekday: "short",
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          });
+        })()
       : label;
   return (
     <div style={{background:"#1a1a1a",border:"1px solid #2e2e2e",borderRadius:3,padding:"7px 10px",fontFamily:"DM Mono",fontSize:10,color:"#f0ede8"}}>
@@ -574,6 +674,73 @@ const TTip = ({ active, payload, label }) => {
     </div>
   );
 };
+
+const WeekdayGrowthTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0]?.payload;
+  if (!p) return null;
+  return (
+    <div
+      style={{
+        background: "#1a1a1a",
+        border: "1px solid #2e2e2e",
+        borderRadius: 3,
+        padding: "7px 10px",
+        fontFamily: "DM Mono",
+        fontSize: 10,
+        color: "#f0ede8",
+      }}
+    >
+      <div style={{ color: "#bbb", marginBottom: 4, fontSize: 10 }}>{p.name}</div>
+      <div>Avg / day: {fmtExactCount(p.avg)}</div>
+      <div>Total: {fmtExactCount(p.total)}</div>
+      <div style={{ color: "#666", fontSize: 9, marginTop: 3 }}>
+        {p.days} day{p.days !== 1 ? "s" : ""} in range
+      </div>
+    </div>
+  );
+};
+
+function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle }) {
+  const hasSamples = (data || []).some((d) => d.days > 0);
+  return (
+    <div className="panel" style={{ marginBottom: 12, ...panelStyle }}>
+      <div className="ph" style={{ marginBottom: 6 }}>
+        <span className="ptitle">DAY OF WEEK</span>
+      </div>
+      {hasSamples ? (
+        <ResponsiveContainer width="100%" height={height}>
+          <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 2 }}>
+            <XAxis dataKey="name" tick={{ fontFamily: "DM Mono", fontSize: 9, fill: "#666" }} axisLine={false} tickLine={false} />
+            <YAxis
+              tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={fmtWhole}
+              width={36}
+            />
+            <Tooltip content={<WeekdayGrowthTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+            <Bar dataKey="avg" name="Avg daily growth" fill="#ff6b6b" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div
+          style={{
+            height,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text3)",
+            fontSize: 11,
+            fontFamily: "DM Mono",
+          }}
+        >
+          {emptyHint}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const platEmoji = {youtube:"▶️",tiktok:"🎵"};
 const getFollowers = (c) => (c?.platform?.followers ?? c?.channel?.subscribers ?? 0) || 0;
@@ -734,18 +901,16 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
       localStorage.setItem("overview-dg-range", id);
     } catch {}
   }, []);
-  const viewsDataFull = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    return buildDailyGrowthSeriesFromChannels(allChannels, todayStr);
-  }, [allChannels]);
-  const viewsData = useMemo(
-    () => filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange),
-    [viewsDataFull, dailyGrowthRange]
-  );
+  const viewsDataFull = useMemo(() => buildDailyGrowthSeriesFromChannels(allChannels), [allChannels]);
+  const viewsData = useMemo(() => {
+    const filtered = filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange);
+    return annotateActivityDates(filtered);
+  }, [viewsDataFull, dailyGrowthRange]);
   const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
+  const weekdayGrowthData = useMemo(() => buildWeekdayGrowthChartData(viewsData), [viewsData]);
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
   const totalFollowers = allChannels.reduce((s, ch) => s + getFollowers(ch), 0);
@@ -863,7 +1028,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                     </linearGradient>
                   </defs>
                   <XAxis
-                    dataKey="raw"
+                    dataKey="activityRaw"
                     ticks={dailyGrowthXTicks}
                     tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
                     tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
@@ -912,7 +1077,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
               </ResponsiveContainer>
               </div>
             ) : (
-              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>1 dot per day from auto-sync. Need 2+ days of data.</div>
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:12}}>Need 2+ days of data.</div>
             )}
           </div>
           <div className="panel" style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -954,6 +1119,21 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
               })()}
             </div>
           </div>
+        </div>
+
+        <div
+          style={{
+            visibility: showChartsAndBrands ? "visible" : "hidden",
+            opacity: showChartsAndBrands ? 1 : 0,
+            transition: "opacity 0.25s",
+            flexShrink: 0,
+          }}
+        >
+          <WeekdayGrowthPanel
+            data={weekdayGrowthData}
+            height={188}
+              emptyHint="No data yet."
+          />
         </div>
 
         <div className="sh" style={{marginBottom:6,flexShrink:0,visibility: showChartsAndBrands ? "visible" : "hidden", opacity: showChartsAndBrands ? 1 : 0, transition: "opacity 0.25s"}}>
@@ -1142,18 +1322,16 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     },
     [dgStorageKey]
   );
-  const viewsDataFull = useMemo(() => {
-    const t = new Date().toISOString().slice(0, 10);
-    return buildDailyGrowthSeriesFromChannels(chData, t);
-  }, [chData]);
-  const viewsData = useMemo(
-    () => filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange),
-    [viewsDataFull, dailyGrowthRange]
-  );
+  const viewsDataFull = useMemo(() => buildDailyGrowthSeriesFromChannels(chData), [chData]);
+  const viewsData = useMemo(() => {
+    const filtered = filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange);
+    return annotateActivityDates(filtered);
+  }, [viewsDataFull, dailyGrowthRange]);
   const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
+  const weekdayGrowthData = useMemo(() => buildWeekdayGrowthChartData(viewsData), [viewsData]);
 
   const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
 
@@ -1220,7 +1398,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                       </linearGradient>
                     </defs>
                     <XAxis
-                      dataKey="raw"
+                      dataKey="activityRaw"
                       ticks={dailyGrowthXTicks}
                       tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
                       tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
@@ -1258,9 +1436,16 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <div style={{height:182,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>1 dot per day from auto-sync. Need 2+ days of data.</div>
+                <div style={{height:182,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>Need 2+ days of data.</div>
               )}
             </div>
+
+            <WeekdayGrowthPanel
+              data={weekdayGrowthData}
+              height={168}
+              emptyHint="No data yet."
+              panelStyle={{ marginBottom: 14 }}
+            />
 
             {actualTab !== "all" && posts.length > 0 && (
               <div className="panel">

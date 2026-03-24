@@ -1,5 +1,7 @@
-// Daily sync – runs at 11:59 PM to capture snapshots for the Daily Growth chart
-// Invoke via cron: GET/POST https://[project].supabase.co/functions/v1/daily-sync?secret=YOUR_CRON_SECRET
+// Daily sync – writes `daily_snapshots` (cumulative total_views) for the Daily Growth chart.
+// Invoked by pg_cron (schedules are UTC — see supabase/migrations/*_daily_sync*.sql). Typical target
+// is ~midnight US Eastern; confirm the active expression in Supabase (Database → Cron / `cron.job`).
+// Invoke manually: GET/POST https://[project].supabase.co/functions/v1/daily-sync?secret=YOUR_CRON_SECRET
 // Set CRON_SECRET in Supabase Edge Function secrets
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
