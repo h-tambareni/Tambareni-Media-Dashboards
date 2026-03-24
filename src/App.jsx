@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine } from "recharts";
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine, LabelList } from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { getInstagramToken } from "./lib/instagramApi";
@@ -274,10 +274,28 @@ const fmt = n => {
   if (n >= 1000) return (n/1000).toFixed(1)+"K";
   return String(n);
 };
+/** Compact axis/label format: whole numbers only (no decimals). */
+const fmtWhole = (n) => {
+  if (typeof n === "string") return n;
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "0";
+  const a = Math.abs(v);
+  if (a >= 1000000) return `${Math.round(v / 1000000)}M`;
+  if (a >= 1000) return `${Math.round(v / 1000)}K`;
+  return String(Math.round(v));
+};
 const fmtNum = n => {
   if (typeof n === "string") return n;
   const v = Math.round(Number(n) || 0);
   return v.toLocaleString();
+};
+/** Tooltip / detail: full integer with grouping (not K/M shorthand). */
+const fmtExactCount = (n) => {
+  if (typeof n === "string") return n;
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  if (Math.abs(v - Math.round(v)) < 1e-6) return Math.round(v).toLocaleString();
+  return v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 };
 
 function usePrefersReducedMotion() {
@@ -367,7 +385,84 @@ const RELIABLE_SNAPSHOTS_SINCE = (() => {
 function reliableSnapshotAxisX(viewsData) {
   if (!RELIABLE_SNAPSHOTS_SINCE || !viewsData?.length) return null;
   const row = viewsData.find((r) => r.raw === RELIABLE_SNAPSHOTS_SINCE);
-  return row?.d ?? null;
+  return row?.raw ?? null;
+}
+
+/** ~10 readable X ticks; uses `raw` (YYYY-MM-DD) so labels stay unique across years. */
+function dailyGrowthXAxisTicks(rows) {
+  if (!rows?.length) return undefined;
+  const n = rows.length;
+  const first = rows[0].raw;
+  const last = rows[n - 1].raw;
+  if (!first || !last) return undefined;
+  const spanDays = Math.max(1, (new Date(`${last}T12:00:00Z`) - new Date(`${first}T12:00:00Z`)) / 86400000);
+  const TARGET = 10;
+  const uniq = (arr) => [...new Set(arr)];
+
+  if (spanDays <= 120) {
+    const step = Math.max(1, Math.ceil(n / TARGET));
+    const out = [];
+    for (let i = 0; i < n; i += step) out.push(rows[i].raw);
+    if (out[out.length - 1] !== last) out.push(last);
+    return uniq(out);
+  }
+
+  let lastYm = null;
+  const monthTicks = [];
+  for (const r of rows) {
+    const ym = r.raw.slice(0, 7);
+    if (ym !== lastYm) {
+      lastYm = ym;
+      monthTicks.push(r.raw);
+    }
+  }
+  if (monthTicks.length <= TARGET + 2) {
+    if (monthTicks[monthTicks.length - 1] !== last) monthTicks.push(last);
+    return uniq(monthTicks);
+  }
+  const k = Math.ceil(monthTicks.length / TARGET);
+  const out = [];
+  for (let i = 0; i < monthTicks.length; i += k) out.push(monthTicks[i]);
+  if (out[out.length - 1] !== last) out.push(last);
+  return uniq(out);
+}
+
+function formatDailyGrowthXTick(raw, rows) {
+  if (!raw || !rows?.length) return "";
+  const first = rows[0].raw;
+  const last = rows[rows.length - 1].raw;
+  if (!first || !last) return formatAxisDateShort(raw);
+  const t0 = new Date(`${first}T12:00:00Z`).getTime();
+  const t1 = new Date(`${last}T12:00:00Z`).getTime();
+  const spanDays = Math.max(1, (t1 - t0) / 86400000);
+  const y0 = new Date(`${first}T12:00:00Z`).getFullYear();
+  const y1 = new Date(`${last}T12:00:00Z`).getFullYear();
+  const crossesYears = y0 !== y1;
+  const d = new Date(`${raw}T12:00:00Z`);
+  if (spanDays <= 120) return formatAxisDateShort(raw);
+  if (spanDays <= 400 && !crossesYears) return d.toLocaleString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+}
+
+/**
+ * When one day is a huge outlier vs the rest, cap Y so typical day-to-day differences use more vertical space.
+ * The spike may flatten at the top; tooltips still show the true value. Returns null for auto scaling.
+ */
+function dailyGrowthYAxisDomainMax(rows) {
+  const nz = (rows || [])
+    .map((r) => Math.max(0, Number(r.views) || 0))
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
+  if (!nz.length) return null;
+  const rawMax = nz[nz.length - 1];
+  const secondMax = nz.length >= 2 ? nz[nz.length - 2] : 0;
+  const p75 = nz[Math.floor((nz.length - 1) * 0.75)];
+  const outlierSpike = secondMax > 0 && rawMax > secondMax * 3;
+  if (!outlierSpike) return null;
+  const scaleMax = Math.max(p75 * 5, secondMax * 1.15, rawMax * 0.25);
+  const cap = Math.min(rawMax, scaleMax);
+  const nice = Math.ceil(cap / 5000) * 5000;
+  return Math.max(nice, 1000);
 }
 
 const DAILY_GROWTH_RANGE_OPTIONS = [
@@ -461,10 +556,21 @@ function fillDailyGrowthGaps(sorted) {
 
 const TTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
+  const displayLabel =
+    typeof label === "string" && /^\d{4}-\d{2}-\d{2}$/.test(label)
+      ? new Date(`${label}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })
+      : label;
   return (
     <div style={{background:"#1a1a1a",border:"1px solid #2e2e2e",borderRadius:3,padding:"7px 10px",fontFamily:"DM Mono",fontSize:10,color:"#f0ede8"}}>
-      <div style={{color:"#555",marginBottom:3,fontSize:9}}>{label}</div>
-      {payload.map(p => <div key={p.name} style={{color:p.color,marginBottom:1}}>{p.name}: {fmt(p.value)}</div>)}
+      <div style={{color:"#555",marginBottom:3,fontSize:9}}>{displayLabel}</div>
+      {payload.map((p) => {
+        const v = p.payload?.views != null ? p.payload.views : p.value;
+        return (
+          <div key={p.name} style={{ color: p.color, marginBottom: 1 }}>
+            {p.name}: {fmtExactCount(v)}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -637,6 +743,9 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
     [viewsDataFull, dailyGrowthRange]
   );
   const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
+  const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
+  const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
+  const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
 
   const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
   const totalFollowers = allChannels.reduce((s, ch) => s + getFollowers(ch), 0);
@@ -746,17 +855,50 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
             {viewsData.length > 0 ? (
               <div style={{flex:1,minHeight:0}}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={viewsData} margin={{top:0,right:0,bottom:0,left:-22}}>
+                <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
                   <defs>
                     <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25}/>
                       <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="d" tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false}/>
-                  <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
+                  <XAxis
+                    dataKey="raw"
+                    ticks={dailyGrowthXTicks}
+                    tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                    tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
+                    axisLine={false}
+                    tickLine={false}
+                    height={26}
+                  />
+                  <YAxis
+                    domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
+                    tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={fmtWhole}
+                    width={40}
+                  />
                   <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
-                  <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv)" name="Daily growth" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
+                  <Area
+                    type="monotone"
+                    dataKey="views"
+                    stroke="#ff6b6b"
+                    strokeWidth={2}
+                    fill="url(#gv)"
+                    name="Daily growth"
+                    dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
+                    activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
+                    isAnimationActive={false}
+                  >
+                    <LabelList
+                      dataKey="views"
+                      position="top"
+                      offset={4}
+                      formatter={(v) => fmtWhole(v)}
+                      style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
+                    />
+                  </Area>
                   {reliableSnapshotLineX && (
                     <ReferenceLine
                       x={reliableSnapshotLineX}
@@ -1009,6 +1151,9 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     [viewsDataFull, dailyGrowthRange]
   );
   const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
+  const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
+  const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
+  const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
 
   const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
 
@@ -1066,18 +1211,41 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                 </div>
               </div>
               {viewsData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={150}>
-                  <AreaChart data={viewsData} margin={{top:0,right:0,bottom:0,left:-22}}>
+                <ResponsiveContainer width="100%" height={182}>
+                  <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
                     <defs>
                       <linearGradient id="gv-brand" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25}/>
                         <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0}/>
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey="d" tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false}/>
-                    <YAxis tick={{fontFamily:"DM Mono",fontSize:8,fill:"#444"}} axisLine={false} tickLine={false} tickFormatter={fmt}/>
+                    <XAxis
+                      dataKey="raw"
+                      ticks={dailyGrowthXTicks}
+                      tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                      tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
+                      axisLine={false}
+                      tickLine={false}
+                      height={26}
+                    />
+                    <YAxis
+                      domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
+                      tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={fmtWhole}
+                      width={40}
+                    />
                     <Tooltip content={<TTip/>} cursor={{stroke:"#444",strokeWidth:1}}/>
-                    <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv-brand)" name="Views" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}/>
+                    <Area type="monotone" dataKey="views" stroke="#ff6b6b" strokeWidth={2} fill="url(#gv-brand)" name="Views" dot={{r:3,fill:"#ff6b6b",strokeWidth:0}} activeDot={{r:4,stroke:"#fff",strokeWidth:2}} isAnimationActive={false}>
+                      <LabelList
+                        dataKey="views"
+                        position="top"
+                        offset={4}
+                        formatter={(v) => fmtWhole(v)}
+                        style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
+                      />
+                    </Area>
                     {reliableSnapshotLineX && (
                       <ReferenceLine
                         x={reliableSnapshotLineX}
@@ -1090,7 +1258,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <div style={{height:150,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>1 dot per day from auto-sync. Need 2+ days of data.</div>
+                <div style={{height:182,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text3)",fontSize:11}}>1 dot per day from auto-sync. Need 2+ days of data.</div>
               )}
             </div>
 
