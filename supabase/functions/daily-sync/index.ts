@@ -18,9 +18,17 @@ type ChannelResult = {
   key: string;
   ok: boolean;
   total_views?: number;
+  /** UUID of the inserted row — use in SQL `where id = '…'` if the table UI count looks wrong. */
+  snapshot_id?: string;
   err?: string;
   warnings?: string[];
 };
+
+/** Trim + lowercase so `youtube ` / ` tiktok` match DB intent; avoids duplicate groups + inserts that "disappear" from filters. */
+function normPlatform(s: unknown): string {
+  const t = String(s ?? "").trim().toLowerCase();
+  return t || "youtube";
+}
 
 /** DB `active` must be treated as inactive only when explicitly false (boolean or legacy string). */
 function isChannelRowActive(active: unknown): boolean {
@@ -49,38 +57,105 @@ Deno.serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    const secret = url.searchParams.get("secret") || (await req.json().catch(() => ({}))).secret;
+    // Do not read JSON body on GET/HEAD — some gateways/runtimes behave badly; cron uses GET with ?secret=
+    let secret = url.searchParams.get("secret") || "";
+    if (!secret && req.method !== "GET" && req.method !== "HEAD") {
+      try {
+        const body = await req.json();
+        secret = typeof body?.secret === "string" ? body.secret : "";
+      } catch {
+        /* empty body */
+      }
+    }
     const cronSecret = Deno.env.get("CRON_SECRET") || "";
     if (cronSecret && secret !== cronSecret) {
+      console.warn("[daily-sync] 401 Unauthorized — wrong or missing ?secret= (must match CRON_SECRET)");
       return Response.json({ error: "Unauthorized" }, { status: 401, headers: cors });
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!supabaseUrl || !serviceKey) {
+      console.error("[daily-sync] missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY (set automatically in hosted Edge; check local invoke)");
+      return Response.json(
+        { error: "Server misconfigured: missing Supabase env" },
+        { status: 500, headers: cors },
+      );
+    }
     const supabase = createClient(supabaseUrl, serviceKey);
     const scKey = (Deno.env.get("SCRAPECREATORS_API_KEY") || "").trim();
 
     if (!scKey) {
+      console.error("[daily-sync] 500 SCRAPECREATORS_API_KEY missing in Edge Function secrets");
       return Response.json({ error: "SCRAPECREATORS_API_KEY not set" }, { status: 500, headers: cors });
     }
 
     const today = new Date().toISOString().slice(0, 10);
+    console.log(`[daily-sync] run start date=${today} (UTC)`);
 
     const { data: channelsRaw } = await supabase
       .from("brand_channels")
       .select("channel_handle, platform, instagram_access_token, instagram_user_id, active");
-    const channels = (channelsRaw || []).filter((r: { active?: unknown }) => isChannelRowActive(r.active));
-    const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string; instagramUserId?: string }>();
-    (channels || []).forEach((r: any) => {
+
+    // Same handle+platform can appear on multiple brands. Do NOT let one "active" row overwrite an
+    // inactive row — if ANY brand marks the account inactive, skip nightly snapshots for that key.
+    type BcRow = {
+      channel_handle: string;
+      platform: string;
+      instagram_access_token?: string | null;
+      instagram_user_id?: string | null;
+      active?: unknown;
+    };
+    /** Instagram: same account can be stored twice (e.g. `lovelogic.podcast` vs `lovelogicpodcast`). Group by Graph user id when present; else fold dots so duplicate spellings share one nightly job + inactive gate. */
+    function groupKeyForRow(r: BcRow): string {
       const h = (r.channel_handle || "").trim().toLowerCase().replace(/^@/, "");
-      const p = r.platform || "youtube";
-      if (h) unique.set(`${h}::${p}`, {
+      const p = normPlatform(r.platform);
+      if (!h) return "";
+      if (p === "instagram") {
+        const uid = (r.instagram_user_id || "").trim();
+        if (uid) return `iguid:${uid}`;
+        const fold = h.replace(/\./g, "");
+        return `igfold:${fold}::instagram`;
+      }
+      return `${h}::${p}`;
+    }
+
+    const groups = new Map<string, BcRow[]>();
+    for (const r of (channelsRaw || []) as BcRow[]) {
+      const k = groupKeyForRow(r);
+      if (!k) continue;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(r);
+    }
+
+    const skippedInactive: string[] = [];
+    const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string; instagramUserId?: string }>();
+    for (const [key, rows] of groups) {
+      if (rows.some((r) => !isChannelRowActive(r.active))) {
+        skippedInactive.push(key);
+        continue;
+      }
+      // Prefer a row that carries an Instagram token for Graph API path
+      const sorted = [...rows].sort((a, b) => {
+        const ta = (a.instagram_access_token || "").trim() ? 1 : 0;
+        const tb = (b.instagram_access_token || "").trim() ? 1 : 0;
+        return tb - ta;
+      });
+      const r = sorted[0];
+      const h = (r.channel_handle || "").trim().toLowerCase().replace(/^@/, "");
+      const p = normPlatform(r.platform);
+      // Map key for loop must stay handle::platform (used in logs + JSON); uid-grouped rows share one insert handle.
+      const mapKey = `${h}::${p}`;
+      unique.set(mapKey, {
         handle: h,
         platform: p,
         instagramAccessToken: (r.instagram_access_token || "").trim() || undefined,
         instagramUserId: (r.instagram_user_id || "").trim() || undefined,
       });
-    });
+    }
+    if (skippedInactive.length) {
+      console.log(`[daily-sync] skipped (inactive on at least one brand_channels row): ${skippedInactive.length}`, skippedInactive.slice(0, 20));
+    }
     let igTokensRaw = "";
     const { data: igRow } = await supabase.from("cron_config").select("value").eq("key", "instagram_tokens").single();
     if (igRow?.value) igTokensRaw = String(igRow.value).trim();
@@ -95,17 +170,20 @@ Deno.serve(async (req) => {
       }
     });
 
+    console.log(`[daily-sync] channels to sync: ${unique.size}`);
+
     const results: ChannelResult[] = [];
 
     for (const { handle, platform, instagramAccessToken, instagramUserId } of unique.values()) {
-      const key = `${handle}::${platform}`;
+      const platformNorm = normPlatform(platform);
+      const key = `${handle}::${platformNorm}`;
       const warnings: string[] = [];
       try {
         let totalViews = 0;
         let followers = 0;
         let videoCount = 0;
 
-        if (platform === "instagram") {
+        if (platformNorm === "instagram") {
           const token = instagramAccessToken || igTokenMap[handle];
           let me: { id?: string; username?: string; followers_count?: number; media_count?: number; error?: { message?: string } } | null = null;
           if (token) {
@@ -205,13 +283,13 @@ Deno.serve(async (req) => {
             }
           }
         } else {
-          const path = platform === "tiktok" ? "/v1/tiktok/profile" : "/v1/youtube/channel";
-          const params = platform === "tiktok" ? { handle } : { handle };
+          const path = platformNorm === "tiktok" ? "/v1/tiktok/profile" : "/v1/youtube/channel";
+          const params = platformNorm === "tiktok" ? { handle } : { handle };
           const sp = new URLSearchParams(params).toString();
           const chRes = await fetch(`${SC_BASE}${path}?${sp}`, { headers: { "x-api-key": scKey } });
           const ch = await chRes.json();
           if (!chRes.ok) throw new Error(ch?.message || `SC channel HTTP ${chRes.status}`);
-          if (platform === "tiktok") {
+          if (platformNorm === "tiktok") {
             const s = ch.stats || {};
             followers = s.followerCount ?? 0;
             videoCount = s.videoCount ?? 0;
@@ -256,16 +334,19 @@ Deno.serve(async (req) => {
 
         const row = {
           channel_handle: handle,
-          platform,
+          platform: platformNorm,
           snapshot_date: today,
           total_views: totalViews,
           followers,
           video_count: videoCount,
         };
-        const { error: insErr } = await supabase.from("daily_snapshots").insert(row);
+        const { data: inserted, error: insErr } = await supabase.from("daily_snapshots").insert(row).select("id").single();
         if (insErr) throw new Error(`daily_snapshots insert: ${insErr.message}`);
+        if (!inserted?.id) {
+          throw new Error("daily_snapshots insert returned no row id (check RLS/triggers or PostgREST select)");
+        }
 
-        const entry: ChannelResult = { key, ok: true, total_views: totalViews };
+        const entry: ChannelResult = { key, ok: true, total_views: totalViews, snapshot_id: inserted.id };
         if (warnings.length) entry.warnings = warnings;
         results.push(entry);
         if (warnings.length) console.warn(`[daily-sync] ${key} ok with warnings:`, warnings.join("; "));
@@ -281,7 +362,10 @@ Deno.serve(async (req) => {
     const failed = results.filter((r) => !r.ok).length;
     console.log(`[daily-sync] date=${today} synced=${synced} failed=${failed}`);
 
-    return Response.json({ ok: true, date: today, synced, failed, results }, { headers: cors });
+    return Response.json(
+      { ok: true, date: today, synced, failed, skipped_inactive: skippedInactive.length, skipped_inactive_keys: skippedInactive, results },
+      { headers: cors },
+    );
   } catch (e) {
     console.error("[daily-sync] fatal:", e);
     return Response.json({ error: String(e) }, { status: 500, headers: cors });

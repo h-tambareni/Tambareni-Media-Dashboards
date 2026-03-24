@@ -112,18 +112,67 @@ export async function removeChannelFromBrand(brandId, channelHandle, platform) {
   if (error) throw error;
 }
 
+/** Same as daily-sync igfold: Instagram handles may differ only by dots (`lovelogic.podcast` vs `lovelogicpodcast`). */
+export function igFoldHandle(h) {
+  return norm(h).replace(/\./g, "");
+}
+
 export async function toggleChannelActive(brandId, channelHandle, platform, active) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+  const plat = platform || "youtube";
   const nh = norm(channelHandle);
   const trimmed = (channelHandle || "").trim().replace(/^@/, "");
   // Match DB row whether it was stored lowercased or legacy casing; avoid .ilike() — _ and % are LIKE wildcards.
-  const candidates = [...new Set([nh, trimmed, trimmed.toLowerCase()].filter(Boolean))];
+  let candidates = [...new Set([nh, trimmed, trimmed.toLowerCase()].filter(Boolean))];
+  if (plat === "instagram") {
+    const fold = igFoldHandle(channelHandle);
+    if (fold && !candidates.includes(fold)) candidates.push(fold);
+  }
+
+  let rows = null;
+  const { data: byHandle, error: qErr } = await supabase
+    .from("brand_channels")
+    .select("id, instagram_user_id, channel_handle")
+    .eq("brand_id", brandId)
+    .eq("platform", plat)
+    .in("channel_handle", candidates);
+  if (qErr) throw new Error(`Failed to update account status: ${qErr.message}`);
+  rows = byHandle;
+
+  if (plat === "instagram" && (!rows || rows.length === 0)) {
+    const { data: allIg, error: allErr } = await supabase
+      .from("brand_channels")
+      .select("id, instagram_user_id, channel_handle")
+      .eq("brand_id", brandId)
+      .eq("platform", "instagram");
+    if (allErr) throw new Error(`Failed to update account status: ${allErr.message}`);
+    const t = igFoldHandle(channelHandle);
+    rows = (allIg || []).filter((r) => igFoldHandle(r.channel_handle) === t);
+  }
+
+  if (!rows?.length) {
+    throw new Error(
+      "No matching account row was updated. Try removing and re-adding the account, or check channel handle in the database.",
+    );
+  }
+
+  const ids = new Set(rows.map((r) => r.id));
+  const uids = [...new Set(rows.map((r) => r.instagram_user_id).filter(Boolean))];
+  if (plat === "instagram" && uids.length) {
+    const { data: sib, error: sErr } = await supabase
+      .from("brand_channels")
+      .select("id")
+      .eq("brand_id", brandId)
+      .eq("platform", "instagram")
+      .in("instagram_user_id", uids);
+    if (sErr) throw new Error(`Failed to update account status: ${sErr.message}`);
+    (sib || []).forEach((r) => ids.add(r.id));
+  }
+
   const { data: updated, error } = await supabase
     .from("brand_channels")
     .update({ active })
-    .eq("brand_id", brandId)
-    .eq("platform", platform || "youtube")
-    .in("channel_handle", candidates)
+    .in("id", [...ids])
     .select("id");
   if (error) throw new Error(`Failed to update account status: ${error.message}`);
   if (!updated?.length) {
@@ -296,7 +345,12 @@ export async function upsertLastManualSync() {
   await supabase.from("cron_config").upsert({ key: "last_manual_sync", value: now }, { onConflict: "key" });
 }
 
-/** Returns the most recent refresh time: max of 11 PM cron, Sync All timestamp, and channel_cache (when data was actually saved). */
+/**
+ * Latest activity that refreshed stored data — max of:
+ * - `daily_snapshots` (nightly cron inserts)
+ * - `cron_config.last_manual_sync` (password Sync All)
+ * - `channel_cache.last_synced_at` (any account sync: single-channel fetch or batch)
+ */
 export async function fetchLastSyncTime() {
   if (!isSupabaseConfigured()) return null;
   const [snapRes, manualRes, cacheRes] = await Promise.all([
@@ -309,5 +363,5 @@ export async function fetchLastSyncTime() {
   const cacheTime = cacheRes.data?.last_synced_at ? new Date(cacheRes.data.last_synced_at) : null;
   const times = [snapTime, manualTime, cacheTime].filter(Boolean);
   if (!times.length) return null;
-  return new Date(Math.max(...times.map(d => d.getTime())));
+  return new Date(Math.max(...times.map((d) => d.getTime())));
 }

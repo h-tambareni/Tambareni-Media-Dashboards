@@ -18,6 +18,14 @@ import {
 const PlatformContext = createContext(null);
 const inFlight = new Map();
 
+function notifyChannelCacheUpdated() {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("tambareni-cache-updated"));
+    }
+  } catch {}
+}
+
 export function YouTubeProvider({ children }) {
   const apiKey = import.meta.env.VITE_SCRAPECREATORS_API_KEY || "";
   const [channels, setChannels] = useState({});
@@ -141,7 +149,9 @@ export function YouTubeProvider({ children }) {
               setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
               const canonicalHandle = entry?.channel?.handle || entry?.platform?.handle || handle;
               const canonicalKey = ck(canonicalHandle, plat);
-              if (isSupabaseConfigured()) upsertChannelCache(canonicalKey, entry).catch(() => {});
+              if (isSupabaseConfigured()) {
+                upsertChannelCache(canonicalKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
+              }
               return entry;
             }
           }
@@ -240,7 +250,7 @@ export function YouTubeProvider({ children }) {
           if (isSupabaseConfigured()) {
             const canonicalHandle = ch?.handle || handle;
             const canonicalKey = ck(canonicalHandle, plat);
-            upsertChannelCache(canonicalKey, entry).catch(() => {});
+            upsertChannelCache(canonicalKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
             if (plat === "youtube" && ch?.id) updateBrandChannelYoutubeId(handle, plat, ch.id).catch(() => {});
           }
           return entry;
@@ -302,7 +312,7 @@ export function YouTubeProvider({ children }) {
         return added.length ? [...prev, ...added] : prev;
       });
       for (const { key, entry } of withDaily) {
-        upsertChannelCache(key, entry).catch(() => {});
+        upsertChannelCache(key, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
         if (entry.channel?.platform === "youtube" && entry.channel?.id) {
           const { handle, platform } = pk(key);
           updateBrandChannelYoutubeId(handle, platform, entry.channel.id).catch(() => {});

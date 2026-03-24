@@ -12,6 +12,7 @@ import {
   toggleChannelActive as dbToggleChannelActive,
   fetchLastSyncTime,
   upsertLastManualSync,
+  igFoldHandle,
   ck, pk,
 } from "./lib/supabaseDb";
 
@@ -56,6 +57,7 @@ const css = `
 .app ::-webkit-scrollbar-thumb:hover { background: #444; }
 .app ::-webkit-scrollbar-thumb:active { background: #555; }
 .sidebar { width: 216px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.sidebar-footer { margin-top: auto; flex-shrink: 0; padding: 14px 18px; border-top: 1px solid var(--border); }
 .logo-area { padding: 22px 18px 18px; border-bottom: 1px solid var(--border); }
 .logo-text { font-family: var(--display); font-size: 28px; letter-spacing: 3px; line-height: 1.2; color: var(--text); cursor: default; user-select: none; }
 .nav-sec { padding: 12px 0; border-bottom: 1px solid var(--border); }
@@ -245,7 +247,8 @@ const css = `
   .ov-pie-posts-stack .top-posts-list { max-height: none !important; }
   .top-post-row { padding: 4px 6px !important; }
   .sidebar-overlay { display: block; }
-  .sidebar { position: fixed; top: 0; left: 0; z-index: 1000; height: 100vh; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,.5); }
+  .sidebar { position: fixed; top: 0; left: 0; z-index: 1000; height: 100vh; max-height: 100vh; height: 100dvh; max-height: 100dvh; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,.5); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  .sidebar-footer { margin-top: 0 !important; padding-bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
   .sidebar.mobile-open { transform: translateX(0); }
   .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
   .sidebar-overlay.visible { opacity: 1; pointer-events: auto; }
@@ -329,6 +332,12 @@ const fmtExactCount = (n) => {
   if (Math.abs(v - Math.round(v)) < 1e-6) return Math.round(v).toLocaleString();
   return v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 };
+
+/** Last refresh line: date + time, no timezone suffix (still uses America/New_York for consistency). */
+function formatLastRefresh(d) {
+  if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
+}
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -1941,13 +1950,25 @@ export default function App() {
     // Keep last-known stats in memory when deactivating; do not clear channelData.
     if (active) fetchChannel(handle, platform, true, false).catch(() => {});
     setBrands(prev => {
-      const n = prev.map(b => b.id === brandId ? { ...b, handleStatus: { ...b.handleStatus, [key]: active } } : b);
+      const n = prev.map((b) => {
+        if (b.id !== brandId) return b;
+        const nextStatus = { ...b.handleStatus };
+        if (platform === "instagram") {
+          const t = igFoldHandle(handle);
+          for (const k of b.handles || []) {
+            const { handle: h2, platform: p2 } = pk(k);
+            if (p2 === "instagram" && igFoldHandle(h2) === t) nextStatus[k] = active;
+          }
+        } else {
+          nextStatus[key] = active;
+        }
+        return { ...b, handleStatus: nextStatus };
+      });
       if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(n)); } catch {}
       return n;
     });
   }, [fetchChannel]);
 
-  const LAST_REFRESH_KEY = "tambareni-last-refresh";
   const SYNC_IN_PROGRESS_KEY = "tambareni-sync-in-progress";
   const SYNC_IN_PROGRESS_TTL = 5 * 60 * 1000; // 5 min
   const [syncing, setSyncing] = useState(() => {
@@ -1958,13 +1979,7 @@ export default function App() {
       return Date.now() - startedAt < SYNC_IN_PROGRESS_TTL;
     } catch { return false; }
   });
-  const [lastSync, setLastSync] = useState(() => {
-    try {
-      const s = localStorage.getItem(LAST_REFRESH_KEY);
-      if (s) return new Date(s);
-      return null;
-    } catch { return null; }
-  });
+  const [lastSync, setLastSync] = useState(null);
   const [syncErrors, setSyncErrors] = useState([]);
   const [syncProgress, setSyncProgress] = useState({ completed: 0, total: 0 });
   const [syncElapsed, setSyncElapsed] = useState(0);
@@ -1973,17 +1988,20 @@ export default function App() {
   const refreshLastSync = useCallback(async () => {
     if (!isSupabaseConfigured()) return;
     const dbTime = await fetchLastSyncTime().catch(() => null);
-    if (dbTime) setLastSync(prev => (!prev || dbTime > prev ? dbTime : prev));
+    setLastSync(dbTime);
   }, []);
 
   useEffect(() => {
     refreshLastSync();
     const id = setInterval(refreshLastSync, 120000);
     const onVisible = () => { if (document.visibilityState === "visible") refreshLastSync(); };
+    const onCacheUpdated = () => { refreshLastSync(); };
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("tambareni-cache-updated", onCacheUpdated);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("tambareni-cache-updated", onCacheUpdated);
     };
   }, [refreshLastSync]);
 
@@ -2068,12 +2086,11 @@ export default function App() {
 
       setSyncProgress({ completed: total, total });
       setSyncErrors(errs);
-      const now = new Date();
-      setLastSync(now);
-      try { localStorage.setItem(LAST_REFRESH_KEY, now.toISOString()); } catch {}
       if (isSupabaseConfigured()) {
         await upsertLastManualSync();
-        refreshLastSync();
+        await refreshLastSync();
+      } else {
+        setLastSync(new Date());
       }
     } finally {
       setSyncing(false);
@@ -2178,9 +2195,11 @@ export default function App() {
                 );
               })}
           </div>
-          <div style={{marginTop:"auto",padding:"14px 18px",borderTop:"1px solid var(--border)"}}>
+          <div className="sidebar-footer">
             <div style={{fontFamily:"DM Mono",fontSize:8,color:"#333",letterSpacing:2}}>
-              <>LAST REFRESH<br/><span style={{color:"#555",fontSize:9}}>{lastSync ? lastSync.toLocaleString() : "Never"}</span><br/><span style={{color:"#333",fontSize:8}}>Daily sync: 11 PM ET</span></>
+              LAST REFRESH
+              <br />
+              <span style={{ color: "#555", fontSize: 9, letterSpacing: 0 }}>{lastSync ? formatLastRefresh(lastSync) : "Never"}</span>
             </div>
           </div>
         </div>
