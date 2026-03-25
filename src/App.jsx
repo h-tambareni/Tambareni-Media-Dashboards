@@ -1,8 +1,23 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine, LabelList } from "recharts";
+import {
+  ComposedChart,
+  Area,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  ReferenceLine,
+  LabelList,
+  Customized,
+} from "recharts";
 import { useYouTubeContext } from "./context/YouTubeContext";
 import { isSupabaseConfigured } from "./lib/supabase";
-import { getInstagramToken } from "./lib/instagramApi";
 import {
   fetchBrandsWithChannels,
   createBrand as dbCreateBrand,
@@ -12,6 +27,7 @@ import {
   toggleChannelActive as dbToggleChannelActive,
   fetchLastSyncTime,
   upsertLastManualSync,
+  pruneOrphanChannelCaches,
   igFoldHandle,
   ck, pk,
 } from "./lib/supabaseDb";
@@ -31,6 +47,13 @@ async function runWithConcurrency(items, limit, fn) {
   };
   await Promise.all(Array.from({ length: workers }, () => worker()));
   return ret;
+}
+
+/** Single leading @ for account rows (stored handle may omit or repeat @). */
+function atMention(handle) {
+  if (handle == null || handle === "") return "";
+  const s = String(handle).trim().replace(/^@+/, "");
+  return s ? `@${s}` : "";
 }
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');`;
@@ -101,7 +124,10 @@ const css = `
 .ov-brands-split { display:grid; grid-template-columns:1fr 1fr 1fr; grid-template-rows:auto auto; gap:12px; align-content:start; align-items:stretch; }
 .ov-brands-split-corner { grid-column:1; grid-row:1; min-height:0; }
 .ov-brands-header-cols { grid-column:2 / 4; grid-row:1; display:flex; align-items:center; justify-content:space-between; margin-bottom:0; flex-shrink:0; }
-.ov-pie-posts-stack { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; align-self:stretch; width:100%; overflow:hidden; }
+.ov-pie-posts-stack { grid-column:1; grid-row:2; display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; align-self:stretch; width:100%; overflow:visible; }
+.ov-platform-split-panel.panel { overflow:visible !important; }
+.ov-platform-split-panel .recharts-wrapper,
+.ov-platform-split-panel .recharts-surface { overflow:visible !important; }
 .ov-top-posts-panel { padding:10px 12px !important; flex:1 1 0 !important; min-height:0 !important; display:flex !important; flex-direction:column !important; overflow:hidden !important; }
 .ov-top-posts-list { gap:3px !important; flex:1 1 0 !important; min-height:0 !important; overflow-y:auto !important; overflow-x:hidden; }
 .top-post-row-compact { padding:3px 6px !important; border-radius:2px; }
@@ -142,18 +168,20 @@ const css = `
 .pbody { flex:1; min-width:0; padding:12px 14px; display:flex; flex-direction:column; justify-content:flex-start; }
 .pcap { font-size:11px; color:var(--text2); margin-bottom:8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .pvbig { font-family:var(--display); font-size:24px; letter-spacing:1px; color:var(--text); margin-bottom:10px; }
-.psr { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:auto; flex-wrap:wrap; }
-.psr-left { display:flex; align-items:center; gap:14px; }
+.psr { display:flex; flex-direction:column; align-items:flex-start; gap:6px; margin-top:auto; }
+.psr-left { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
 .pst { font-family:var(--display); font-size:18px; letter-spacing:1px; color:var(--text3); display:flex; align-items:center; gap:4px; }
 .pst span { color:var(--text2); font-family:var(--display); font-size:18px; letter-spacing:1px; }
-.pst-lv { font-family:var(--display); font-size:18px; letter-spacing:1px; color:var(--text2); flex-shrink:0; }
+.pst-lv { font-family:var(--display); font-size:18px; letter-spacing:1px; color:var(--text2); flex-shrink:0; width:100%; }
 .arow { display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:4px; margin-bottom:5px; }
 .picon { width:28px; height:28px; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
 .pig { background:linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045); }
 .pyt { background:#ff0000; }
 .ptt { background:#010101; border:1px solid #2a2a2a; }
-.ainfo { flex:1; }
-.ahandle { font-size:12px; font-weight:500; }
+.ainfo { flex:1; min-width:0; }
+.ahandle-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 10px; min-width:0; }
+.ahandle { font-size:12px; font-weight:500; min-width:0; }
+.at-mention { font-family:var(--mono); font-size:10px; color:var(--text2); font-weight:400; letter-spacing:0.03em; flex-shrink:0; }
 .atag { font-family:var(--mono); font-size:9px; color:var(--text3); margin-top:1px; }
 .ameta { font-family:var(--mono); font-size:9px; color:var(--text3); text-align:right; line-height:1.6; }
 .aacts { display:flex; gap:5px; }
@@ -373,7 +401,13 @@ function channelDailyGrowthFromSnapshots(rows) {
     }
     // One day cannot plausibly add most of lifetime cumulative views.
     if (maxCum > 50_000 && dailyGrowth > maxCum * 0.45) dailyGrowth = 0;
-    out.push({ row, dailyGrowth });
+
+    const prevF = prevRow ? (prevRow.followers ?? 0) : 0;
+    const currF = row.followers ?? 0;
+    let dailyFollowerGrowth = prevRow ? Math.max(0, currF - prevF) : 0;
+    if (prevRow && prevF <= 0 && currF > 0) dailyFollowerGrowth = 0;
+
+    out.push({ row, dailyGrowth, dailyFollowerGrowth });
   });
   return out;
 }
@@ -570,6 +604,17 @@ function dailyGrowthYAxisDomainMax(rows) {
   return Math.max(nice, 1000);
 }
 
+/** Right Y-axis for daily follower net gain (usually smaller scale than views). */
+function dailyGrowthFollowerAxisDomainMax(rows) {
+  const nz = (rows || [])
+    .map((r) => Math.max(0, Number(r.followerGrowth) || 0))
+    .filter((v) => v > 0);
+  if (!nz.length) return null;
+  const rawMax = Math.max(...nz);
+  const nice = Math.ceil(rawMax / 50) * 50;
+  return Math.max(nice, 10);
+}
+
 const DAILY_GROWTH_RANGE_OPTIONS = [
   { id: "all", label: "All time" },
   { id: "ytd", label: "YTD" },
@@ -597,6 +642,178 @@ function filterDailyGrowthByRange(rows, rangeId) {
   const cutoff = getDailyGrowthRangeCutoff(rangeId);
   if (!cutoff) return rows;
   return rows.filter((r) => (r.raw || "") >= cutoff);
+}
+
+/**
+ * Per-point labels: red stays near the red (views) point above, teal near the teal (followers) point below.
+ * Overlaps resolved with horizontal nudges first so we don’t shove one series toward the other line.
+ */
+function DailyGrowthDualAxisLabels(props) {
+  const { formattedGraphicalItems, offset } = props;
+  if (!formattedGraphicalItems?.length || !offset?.width) return null;
+
+  let ptsViews = null;
+  let ptsFol = null;
+  for (const fg of formattedGraphicalItems) {
+    const dk = fg?.item?.props?.dataKey;
+    if (dk === "views") ptsViews = fg.props?.points;
+    if (dk === "followerGrowth") ptsFol = fg.props?.points;
+  }
+  if (!ptsViews?.length || !ptsFol?.length || ptsViews.length !== ptsFol.length) return null;
+
+  const left = offset.left;
+  const top = offset.top;
+  const right = left + offset.width;
+  const bottom = top + offset.height;
+
+  const LABEL_H = 11;
+  const FONT = 8;
+  /** Pixels above views point / below followers point (tight to each line). */
+  const GAP_V = 9;
+  /** Min gap between label center and its anchor so text doesn’t sit on the dot. */
+  const ANCHOR_PAD = 5;
+  const estW = (t) => Math.max(22, String(t).length * 4.75);
+
+  function boxesOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    return ax - aw / 2 < bx + bw / 2 && ax + aw / 2 > bx - bw / 2 && ay - ah / 2 < by + bh / 2 && ay + ah / 2 > by - bh / 2;
+  }
+
+  /** Keep each label on the correct side of its own line (SVG y grows downward). */
+  function projectToAnchor(it) {
+    if (it.kind === "v") {
+      const cap = it.anchorY - ANCHOR_PAD;
+      if (it.y > cap) it.y = cap;
+    } else {
+      const floor = it.anchorY + ANCHOR_PAD;
+      if (it.y < floor) it.y = floor;
+    }
+    it.x = Math.min(right - 4, Math.max(left + 4, it.x));
+    it.y = Math.min(bottom - 6, Math.max(top + 6, it.y));
+  }
+
+  function resolveAnchored(items) {
+    const nudge = 2.75;
+    const hSame = 4.2;
+    for (let iter = 0; iter < 56; iter++) {
+      let hit = false;
+      for (let a = 0; a < items.length; a++) {
+        for (let b = a + 1; b < items.length; b++) {
+          const ia = items[a];
+          const ib = items[b];
+          if (!boxesOverlap(ia.x, ia.y, ia.w, ia.h, ib.x, ib.y, ib.w, ib.h)) continue;
+          hit = true;
+          // Same day, two series: split horizontally — red left of x, teal right (stay near each line).
+          if (ia.i === ib.i && ia.kind !== ib.kind) {
+            if (ia.kind === "v") {
+              ia.x -= hSame;
+              ib.x += hSame;
+            } else {
+              ib.x -= hSame;
+              ia.x += hSame;
+            }
+            continue;
+          }
+          // Same series: separate along X so we don’t push labels toward the other line’s Y band.
+          if (ia.kind === ib.kind) {
+            if (ia.x <= ib.x) {
+              ia.x -= nudge;
+              ib.x += nudge;
+            } else {
+              ia.x += nudge;
+              ib.x -= nudge;
+            }
+            continue;
+          }
+          // Different days, different series: small diagonal then re-anchor.
+          let dx = ib.x - ia.x;
+          let dy = ib.y - ia.y;
+          if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
+            dx = ia.i % 2 ? 1 : -1;
+            dy = ia.kind === "v" ? -1 : 1;
+          }
+          const len = Math.hypot(dx, dy) || 1;
+          ia.x -= (dx / len) * nudge;
+          ia.y -= (dy / len) * nudge;
+          ib.x += (dx / len) * nudge;
+          ib.y += (dy / len) * nudge;
+        }
+      }
+      for (const it of items) projectToAnchor(it);
+      if (!hit) break;
+    }
+  }
+
+  const items = [];
+  for (let i = 0; i < ptsViews.length; i++) {
+    const vp = ptsViews[i];
+    const fp = ptsFol[i];
+    if (vp?.y == null || fp?.y == null) continue;
+    const vx = vp.x;
+    const vy = vp.y;
+    const fx = fp.x;
+    const fy = fp.y;
+    const v = Math.max(0, Number(vp.payload?.views) || 0);
+    const f = Math.max(0, Number(fp.payload?.followerGrowth) || 0);
+    const vt = fmtWhole(v);
+    const ft = fmtWhole(f);
+    const vw = estW(vt);
+    const fw = estW(ft);
+
+    const vCy = vy - GAP_V;
+    const fCy = fy + GAP_V;
+
+    items.push({
+      x: vx,
+      y: vCy,
+      w: vw,
+      h: LABEL_H,
+      text: vt,
+      fill: "#ff6b6b",
+      kind: "v",
+      i,
+      anchorX: vx,
+      anchorY: vy,
+    });
+    items.push({
+      x: fx,
+      y: fCy,
+      w: fw,
+      h: LABEL_H,
+      text: ft,
+      fill: "#5ec8d0",
+      kind: "f",
+      i,
+      anchorX: fx,
+      anchorY: fy,
+    });
+  }
+
+  for (const it of items) projectToAnchor(it);
+  resolveAnchored(items);
+
+  return (
+    <g className="dg-dual-labels" pointerEvents="none" aria-hidden>
+      {items.map((it) => (
+        <text
+          key={`${it.kind}-${it.i}`}
+          x={it.x}
+          y={it.y}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={it.fill}
+          fontFamily="DM Mono, monospace"
+          fontSize={FONT}
+          fontWeight={600}
+          stroke="#121210"
+          strokeWidth={2.5}
+          paintOrder="stroke fill"
+          style={{ userSelect: "none" }}
+        >
+          {it.text}
+        </text>
+      ))}
+    </g>
+  );
 }
 
 const WEEKDAY_SHORT_MON = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -644,23 +861,27 @@ function buildDailyGrowthSeriesFromChannels(channels) {
   const fmtD = formatAxisDateShort;
   const byDate = {};
   (channels || []).forEach((ch) => {
-    channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth }) => {
+    channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth, dailyFollowerGrowth }) => {
       const key = row.raw || row.d;
-      if (!byDate[key]) byDate[key] = { d: fmtD(key), raw: key, dailyGrowth: 0 };
+      if (!byDate[key]) byDate[key] = { d: fmtD(key), raw: key, dailyGrowth: 0, dailyFollowerGrowth: 0 };
       byDate[key].dailyGrowth += dailyGrowth;
+      byDate[key].dailyFollowerGrowth += dailyFollowerGrowth;
     });
   });
   clipAggregateDailySpikes(byDate);
   let sorted = Object.values(byDate).sort((a, b) => (a.raw || "").localeCompare(b.raw || ""));
   let runSum = 0;
+  let runF = 0;
   sorted.forEach((r) => {
     runSum += r.dailyGrowth;
     r.cumViews = runSum;
+    runF += r.dailyFollowerGrowth ?? 0;
+    r.cumFollowerRun = runF;
   });
   if (sorted.length === 1) {
     const d0 = sorted[0].raw || "";
     const prevStr = d0 ? previousCalendarDay(d0) : localYesterdayYyyyMmDd();
-    sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0 }, ...sorted];
+    sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0, cumFollowerRun: 0 }, ...sorted];
   }
   return fillDailyGrowthGaps(sorted);
 }
@@ -675,6 +896,7 @@ function fillDailyGrowthGaps(sorted) {
   if (last < yesterday) last = yesterday;
   const result = [];
   let prevCum = 0;
+  let prevFollowerCum = 0;
   const startMs = new Date(first + "T12:00:00Z").getTime();
   const endMs = new Date(last + "T12:00:00Z").getTime();
   const dayMs = 86400000;
@@ -683,26 +905,46 @@ function fillDailyGrowthGaps(sorted) {
     const raw = d.toISOString().slice(0, 10);
     const existing = byRaw[raw];
     const cumViews = existing ? existing.cumViews : prevCum;
+    const cumFollowerRun = existing ? existing.cumFollowerRun : prevFollowerCum;
     result.push({
       d: formatAxisDateShort(raw),
       raw,
       cumViews,
+      cumFollowerRun,
       views: 0,
+      followerGrowth: 0,
     });
     prevCum = cumViews;
+    prevFollowerCum = cumFollowerRun;
   }
   result.forEach((row, i) => {
     row.views = i === 0 ? 0 : Math.max(0, row.cumViews - result[i - 1].cumViews);
+    row.followerGrowth = i === 0 ? 0 : Math.max(0, row.cumFollowerRun - result[i - 1].cumFollowerRun);
   });
   return result;
 }
 
+/** Tooltip only: views ÷ net follower Δ as fixed decimals; ∞ / — when undefined. */
+function formatTooltipViewsFollowersRatio(views, followerDelta) {
+  const v = Math.max(0, Number(views) || 0);
+  const f = Math.max(0, Number(followerDelta) || 0);
+  if (f > 0) return (v / f).toFixed(2);
+  if (v > 0) return "∞";
+  return "—";
+}
+
 const TTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
-  const displayLabel =
+  const pl = payload[0]?.payload;
+  if (!pl) return null;
+  const raw =
     typeof label === "string" && /^\d{4}-\d{2}-\d{2}$/.test(label)
+      ? label
+      : pl?.activityRaw || pl?.raw || label;
+  const displayLabel =
+    typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)
       ? (() => {
-          const [y, mo, da] = label.slice(0, 10).split("-").map(Number);
+          const [y, mo, da] = raw.slice(0, 10).split("-").map(Number);
           return new Date(y, mo - 1, da).toLocaleDateString(undefined, {
             weekday: "short",
             year: "numeric",
@@ -710,21 +952,81 @@ const TTip = ({ active, payload, label }) => {
             day: "numeric",
           });
         })()
-      : label;
+      : raw;
+  const views = Math.max(0, Number(pl.views) || 0);
+  const fg = Math.max(0, Number(pl.followerGrowth) || 0);
+  const ratioText = formatTooltipViewsFollowersRatio(views, fg);
   return (
     <div style={{background:"#1a1a1a",border:"1px solid #2e2e2e",borderRadius:3,padding:"7px 10px",fontFamily:"DM Mono",fontSize:10,color:"#f0ede8"}}>
-      <div style={{color:"#555",marginBottom:3,fontSize:9}}>{displayLabel}</div>
-      {payload.map((p) => {
-        const v = p.payload?.views != null ? p.payload.views : p.value;
-        return (
-          <div key={p.name} style={{ color: p.color, marginBottom: 1 }}>
-            {p.name}: {fmtExactCount(v)}
-          </div>
-        );
-      })}
+      <div style={{color:"#555",marginBottom:6,fontSize:9}}>{displayLabel}</div>
+      <div style={{ color: "#ff6b6b", marginBottom: 3 }}>
+        Views (day): <span style={{ color: "#f0ede8" }}>{fmtExactCount(views)}</span>
+      </div>
+      <div style={{ color: "#5ec8d0", marginBottom: 3 }}>
+        Followers (net/day): <span style={{ color: "#f0ede8" }}>{fmtExactCount(fg)}</span>
+      </div>
+      <div style={{ color: "#a8a5a0", fontSize: 9, marginTop: 4, paddingTop: 6, borderTop: "1px solid #2a2a2a" }}>
+        Views / followers: <span style={{ color: "#f0ede8" }}>{ratioText}</span>
+      </div>
     </div>
   );
 };
+
+/**
+ * Labels outside the ring, centered on the slice bisector. Quadrant-based anchor + small tangent
+ * nudge so TT / YT / IG sit more evenly (Pie radii unchanged).
+ */
+function PlatformPieSliceLabel({ cx, cy, midAngle, outerRadius, name, value, percent, fill }) {
+  if (name === "—" || cx == null || cy == null || midAngle == null) return null;
+  const RADIAN = Math.PI / 180;
+  const or = Number(outerRadius) || 0;
+  const phi = -midAngle * RADIAN;
+  const ux = Math.cos(phi);
+  const uy = Math.sin(phi);
+  const pad = 24;
+  let x = cx + (or + pad) * ux;
+  let y = cy + (or + pad) * uy;
+  const tnx = -uy;
+  const tny = ux;
+  if (uy < -0.45) {
+    x += tnx * 8;
+    y += tny * 8;
+  } else if (ux > 0.5) {
+    x += tnx * 5;
+    y += tny * 5;
+  } else if (ux < -0.45) {
+    x += tnx * -6;
+    y += tny * -6;
+  } else if (uy > 0.35) {
+    x += tnx * -4;
+    y += tny * -4;
+  }
+  let textAnchor = "middle";
+  if (ux > 0.42) textAnchor = "start";
+  else if (ux < -0.42) textAnchor = "end";
+
+  const pct = percent != null && Number.isFinite(percent) ? Math.round(percent * 100) : 0;
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor={textAnchor}
+      dominantBaseline="middle"
+      fill={fill}
+      fontFamily="DM Mono, monospace"
+      fontSize={11}
+      fontWeight={600}
+      pointerEvents="none"
+    >
+      <tspan x={x} dy="-0.55em">
+        {name} {pct}%
+      </tspan>
+      <tspan x={x} dy="1.15em" fill="#c8c4bf" fontSize={10} fontWeight={400}>
+        {fmtWhole(value)}
+      </tspan>
+    </text>
+  );
+}
 
 const WeekdayGrowthTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
@@ -767,7 +1069,7 @@ function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle, fillHeight })
           <ResponsiveContainer width="100%" height={fillHeight ? "100%" : height}>
             <BarChart
               data={data}
-              margin={{ top: 22, right: 8, left: 2, bottom: 4 }}
+              margin={{ top: 26, right: 8, left: 2, bottom: 4 }}
               barCategoryGap="8%"
               barGap={3}
             >
@@ -787,14 +1089,13 @@ function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle, fillHeight })
                 tickFormatter={fmtWhole}
                 width={38}
               />
-              <Tooltip content={<WeekdayGrowthTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+              <Tooltip content={WeekdayGrowthTooltip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
               <Bar dataKey="avg" name="Avg daily growth" fill="#ff6b6b" radius={[3, 3, 0, 0]} isAnimationActive={false}>
                 <LabelList
                   dataKey="avg"
                   position="top"
-                  offset={4}
                   formatter={(v) => fmtWhole(v)}
-                  style={{ fontFamily: "DM Mono", fontSize: 8, fill: "#aaa" }}
+                  style={{ fontFamily: "DM Mono", fontSize: 8, fill: "#e8e4de" }}
                 />
               </Bar>
             </BarChart>
@@ -851,15 +1152,25 @@ function Pfp({ src, srcs, size = 28, fallback, name }) {
 const digitSpinKeyframes = `@keyframes digitRoll{0%{transform:translateY(0)}100%{transform:translateY(-10em)}}`;
 function DigitSlot({ digit, spinning, delay }) {
   const d = Math.min(9, Math.max(0, digit));
+  const delayMs = delay ? `${delay}ms` : "0ms";
+  const spinStyle = spinning
+    ? {
+        animationName: "digitRoll",
+        animationDuration: "0.08s",
+        animationTimingFunction: "linear",
+        animationIterationCount: "infinite",
+        animationDelay: delayMs,
+      }
+    : {
+        transform: `translateY(-${d}em)`,
+      };
   return (
     <span style={{ display: "inline-block", overflow: "hidden", height: "1em", lineHeight: 1, verticalAlign: "bottom" }}>
       <span
         style={{
           display: "flex",
           flexDirection: "column",
-          transform: spinning ? undefined : `translateY(-${d}em)`,
-          animation: spinning ? `digitRoll 0.08s linear infinite` : "none",
-          animationDelay: delay ? `${delay}ms` : undefined,
+          ...spinStyle,
         }}
       >
         {[0,1,2,3,4,5,6,7,8,9].map(n => <span key={n} style={{ height: "1em", display: "block", textAlign: "center" }}>{n}</span>)}
@@ -925,6 +1236,20 @@ function RollingNumber({ value, spinning, format = "full", magnitude, skipAnimat
   );
 }
 
+/** Two rolling groups + decimal point — matches other KPI slot animation for ratios (e.g. views/follower). */
+function RollingDecimalPair({ value, spinning, skipAnimation }) {
+  const v = Number(value) || 0;
+  const whole = Math.floor(Math.abs(v));
+  const frac = Math.min(99, Math.max(0, Math.floor(Math.abs((v % 1) * 100))));
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", fontVariantNumeric: "tabular-nums" }}>
+      <RollingNumber value={whole} spinning={spinning} magnitude={1e4} format="full" skipAnimation={skipAnimation} />
+      <span style={{ margin: "0 1px", opacity: 0.88, lineHeight: 1 }}>.</span>
+      <RollingNumber value={frac} spinning={spinning} magnitude={100} format="full" skipAnimation={skipAnimation} />
+    </span>
+  );
+}
+
 function proxyImageUrl(url) {
   if (!url || typeof url !== "string") return url;
   if (!/cdninstagram|fbcdn\.net|scontent/i.test(url)) return url;
@@ -952,6 +1277,7 @@ function OverviewBrandCard({ b, channelData, onBrand, dataReady, skipNumberAnim 
   const chData = allHandles.map(h => channelData[h]).filter(Boolean);
   const brandFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
   const brandViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
+  const brandViewsPerFollower = brandFollowers > 0 ? brandViews / brandFollowers : null;
   const thumbs = getAllBrandThumbs(b, channelData);
   const hasData = chData.length > 0;
   const allInactive = allHandles.length > 0 && allHandles.every(h => b.handleStatus?.[h] === false);
@@ -985,6 +1311,14 @@ function OverviewBrandCard({ b, channelData, onBrand, dataReady, skipNumberAnim 
                 </div>
                 <div style={{ fontFamily: "var(--mono)", fontSize: 7, color: "var(--text3)" }}>views</div>
               </div>
+              {brandViewsPerFollower != null && (
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontFamily: "var(--display)", fontSize: 17, color: "var(--text)", lineHeight: 1.2, fontVariantNumeric: "tabular-nums" }}>
+                    {dataReady ? brandViewsPerFollower.toFixed(2) : <span style={{ opacity: 0.45 }}>—</span>}
+                  </div>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 7, color: "var(--text3)" }}>v/flw</div>
+                </div>
+              )}
             </div>
           )}
           <span className={`bstatus ${allInactive ? "s-dead" : hasData ? "s-active" : "s-dead"}`}>{allInactive ? "inactive" : hasData ? "active" : "sync needed"}</span>
@@ -1066,7 +1400,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
-  const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
+  const dailyGrowthFollowerYMax = useMemo(() => dailyGrowthFollowerAxisDomainMax(viewsData), [viewsData]);
   const weekdayGrowthData = useMemo(
     () => buildWeekdayGrowthChartData(filterViewsDataReliableOnly(viewsData)),
     [viewsData]
@@ -1094,6 +1428,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const totalComments = allPosts.reduce((s, p) => s + (p.cmts || 0), 0);
   const totalShares = allPosts.reduce((s, p) => s + (p.shares || 0), 0);
   const engagementRate = totalViews > 0 ? ((totalLikes + totalComments + totalShares) / totalViews * 100).toFixed(2) : "0";
+  const viewsPerFollower = totalFollowers > 0 ? totalViews / totalFollowers : 0;
 
   let ytViews = 0, ttViews = 0, igViews = 0;
   allChannels.forEach(ch => {
@@ -1143,7 +1478,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
           ].map(k=>(
             <div key={k.l} className="kcard">
               <div className="klbl">{k.l}</div>
-              <div className="kval">{k.decimal ? (dataReady ? <>{k.v.toFixed(2)}%</> : <><RollingNumber value={Math.floor(k.v)} spinning={!skipNumberAnim && !dataReady} magnitude={10} format="short" skipAnimation={skipNumberAnim} />%</>) : <><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={k.mag} format={k.suffix?"short":"full"} skipAnimation={skipNumberAnim} />{k.suffix||""}</>}</div>
+              <div className="kval">{k.decimal ? (k.plainDecimal ? (dataReady ? <>{k.v.toFixed(2)}{k.suffix ?? ""}</> : <span style={{ opacity: 0.45 }}>—</span>) : (dataReady ? <>{k.v.toFixed(2)}{k.suffix !== undefined ? k.suffix : "%"}</> : <><RollingNumber value={Math.floor(k.v)} spinning={!skipNumberAnim && !dataReady} magnitude={10} format="short" skipAnimation={skipNumberAnim} />{k.suffix !== undefined ? k.suffix : "%"}</>)) : <><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={k.mag} format={k.suffix?"short":"full"} skipAnimation={skipNumberAnim} />{k.suffix||""}</>}</div>
               <div className="ksub">{k.s}</div>
             </div>
           ))}
@@ -1153,13 +1488,30 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
             <span className="alert-txt"><strong>Sync failed for {syncErrors.length} account{syncErrors.length!==1?"s":""}:</strong> {syncErrors.map(e=>e.key).join(", ")} — {syncErrors[0]?.msg}</span>
           </div>
         )}
-        <div className="krow" style={{gridTemplateColumns:"repeat(3,1fr)",marginTop:-4}}>
+        <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)",marginTop:-4}}>
           {[
             {l:"Total Likes",v:totalLikes,s:"❤️ All content"},
             {l:"Comments",v:totalComments,s:"💬 All content"},
             {l:"Shares",v:totalShares,s:"↗️ All content"},
+            {l:"Views / Follower",v:viewsPerFollower,s:"Σ views ÷ Σ followers",decimal:true,suffix:"",plainDecimal:true},
           ].map(k=>(
-            <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval"><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} /></div><div className="ksub">{k.s}</div></div>
+            <div key={k.l} className="kcard">
+              <div className="klbl">{k.l}</div>
+              <div className="kval">
+                {k.decimal ? (
+                  k.plainDecimal ? (
+                    dataReady ? (
+                      <>{k.v.toFixed(2)}</>
+                    ) : (
+                      <RollingDecimalPair value={k.v} spinning={!skipNumberAnim && !dataReady} skipAnimation={skipNumberAnim} />
+                    )
+                  ) : null
+                ) : (
+                  <RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} />
+                )}
+              </div>
+              <div className="ksub">{k.s}</div>
+            </div>
           ))}
         </div>
         </div>
@@ -1175,9 +1527,16 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
           }}
         >
           <div className="ov-dg-row">
-            <div className="panel" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-              <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
+            <div
+              className="panel"
+              style={{ display: "flex", flexDirection: "column", minHeight: 0, paddingBottom: 8, paddingTop: 12 }}
+            >
+              <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6, marginBottom: 4 }}>
                 <span className="ptitle">DAILY GROWTH</span>
+                <span style={{ fontSize: 9, color: "#888", fontFamily: "DM Mono", whiteSpace: "nowrap" }}>
+                  <span style={{ color: "#ff6b6b" }} aria-hidden>■</span> Views (day) ·{" "}
+                  <span style={{ color: "#5ec8d0" }} aria-hidden>■</span> Followers (net/day)
+                </span>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                   {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
                     <button
@@ -1195,7 +1554,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
               {viewsData.length > 0 ? (
                 <div style={{ flex: 1, minHeight: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
+                    <ComposedChart data={viewsData} margin={{ top: 18, right: 44, bottom: 6, left: 2 }}>
                       <defs>
                         <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
@@ -1209,46 +1568,63 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
                         axisLine={false}
                         tickLine={false}
-                        height={26}
+                        height={18}
+                        interval="preserveStartEnd"
                       />
                       <YAxis
+                        yAxisId="left"
                         domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
-                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                         axisLine={false}
                         tickLine={false}
                         tickFormatter={fmtWhole}
                         width={40}
                       />
-                      <Tooltip content={<TTip />} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        domain={dailyGrowthFollowerYMax != null ? [0, dailyGrowthFollowerYMax] : [0, "auto"]}
+                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={fmtWhole}
+                        width={36}
+                      />
+                      <Tooltip content={TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                      {reliableSnapshotLineX && (
+                        <ReferenceLine
+                          yAxisId="left"
+                          x={reliableSnapshotLineX}
+                          stroke="rgba(245,242,237,0.45)"
+                          strokeWidth={1}
+                          strokeDasharray="4 4"
+                        />
+                      )}
                       <Area
+                        yAxisId="left"
                         type="monotone"
                         dataKey="views"
                         stroke="#ff6b6b"
                         strokeWidth={2}
                         fill="url(#gv)"
-                        name="Daily growth"
+                        name="Views (day)"
                         dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
                         activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                         isAnimationActive={false}
-                      >
-                        <LabelList
-                          dataKey="views"
-                          position="top"
-                          offset={4}
-                          formatter={(v) => fmtWhole(v)}
-                          style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
-                        />
-                      </Area>
-                      {reliableSnapshotLineX && (
-                        <ReferenceLine
-                          x={reliableSnapshotLineX}
-                          stroke="rgba(245,242,237,0.45)"
-                          strokeWidth={1}
-                          strokeDasharray="4 4"
-                          isFront
-                        />
-                      )}
-                    </AreaChart>
+                      />
+                      <Line
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="followerGrowth"
+                        stroke="#5ec8d0"
+                        strokeWidth={2}
+                        name="Followers (net/day)"
+                        dot={{ r: 2, fill: "#5ec8d0", strokeWidth: 0 }}
+                        activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
+                        isAnimationActive={false}
+                      />
+                      <Customized component={DailyGrowthDualAxisLabels} />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               ) : (
@@ -1280,40 +1656,33 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                   <span style={{ fontFamily: "DM Mono", fontSize: 9, color: "var(--text3)" }}>{brandsList.length} brands</span>
                 </div>
                 <div className="ov-pie-posts-stack">
-                  <div className="panel" style={{ display: "flex", flexDirection: "column", alignItems: "stretch", flex: "0 0 auto", flexShrink: 0, minHeight: 200 }}>
-                    <div className="ptitle" style={{ alignSelf: "stretch", marginBottom: 4, flexShrink: 0 }}>PLATFORM SPLIT</div>
-                    <div style={{ flex: 1, minHeight: 160, width: "100%" }}>
+                  <div
+                    className="panel ov-platform-split-panel"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "stretch",
+                      flex: "0 0 auto",
+                      flexShrink: 0,
+                      minHeight: 200,
+                      padding: "11px 12px",
+                    }}
+                  >
+                    <div className="ptitle" style={{ alignSelf: "stretch", marginBottom: 2, flexShrink: 0, fontSize: 15, letterSpacing: 1.5 }}>PLATFORM SPLIT</div>
+                    <div style={{ flex: 1, minHeight: 120, width: "100%", display: "flex", flexDirection: "column", overflow: "visible" }}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
+                        <PieChart margin={{ top: 10, right: 12, bottom: 10, left: 12 }}>
                           <Pie
                             data={pieData}
                             dataKey="value"
                             cx="50%"
-                            cy="50%"
-                            innerRadius="58%"
-                            outerRadius="80%"
+                            cy="52%"
+                            innerRadius="48%"
+                            outerRadius="92%"
                             strokeWidth={0}
-                            label={({ name, percent, value, cx, cy, midAngle, innerRadius, outerRadius }) => {
-                              const R = Math.PI / 180;
-                              const r = (innerRadius + outerRadius) / 2 + 12;
-                              const x = cx + r * Math.cos(-midAngle * R);
-                              const y = cy + r * Math.sin(-midAngle * R);
-                              const pct = (percent * 100).toFixed(0);
-                              const num = fmtWhole(value);
-                              return (
-                                <text
-                                  x={x}
-                                  y={y}
-                                  fill="#f5f2ed"
-                                  textAnchor="middle"
-                                  dominantBaseline="central"
-                                  style={{ fontSize: 11, fontFamily: "DM Mono", fontWeight: 500 }}
-                                >
-                                  {name} {pct}% {num}
-                                </text>
-                              );
-                            }}
-                            labelLine={false}
+                            label={PlatformPieSliceLabel}
+                            labelLine={{ stroke: "rgba(255,255,255,0.14)", strokeWidth: 1 }}
+                            isAnimationActive={false}
                           >
                             {pieData.map((d, i) => (
                               <Cell key={i} fill={d.color} />
@@ -1479,11 +1848,16 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
-  const dgLabelFontSize = viewsData.length > 40 ? 6 : viewsData.length > 22 ? 7 : 8;
+  const dailyGrowthFollowerYMax = useMemo(() => dailyGrowthFollowerAxisDomainMax(viewsData), [viewsData]);
   const weekdayGrowthData = useMemo(
     () => buildWeekdayGrowthChartData(filterViewsDataReliableOnly(viewsData)),
     [viewsData]
   );
+  const brandViewsPerFollowerK = totalFollowers > 0 ? totalViews / totalFollowers : null;
+
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const skipNumberAnim = prefersReducedMotion;
+  const dataReadyBrand = allHandles.length > 0 && allHandles.every((k) => channelData[k]);
 
   const tabs = [{ k: "all", label: "ALL" }, ...brandPlatforms.map(p => ({ k: p, label: PLAT_TAB_LABEL[p] || p, inactive: isPlatformInactive(p) }))];
 
@@ -1514,12 +1888,75 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
 
         {hasChannelData && (
           <>
-            <div className="krow" style={{gridTemplateColumns:"repeat(5,1fr)"}}>
+            <div className="krow" style={{gridTemplateColumns:"repeat(6,1fr)"}}>
               {[
-                {l:"Followers",v:fmt(totalFollowers)},{l:"Total Views",v:fmt(totalViews)},
-                {l:"Avg Views/Post",v:fmt(avgV)},{l:"Total Likes",v:fmt(totalLikes)},{l:"Comments",v:fmt(totalComments)},
-              ].map(k => (
-                <div key={k.l} className="kcard"><div className="klbl">{k.l}</div><div className="kval">{k.v}</div></div>
+                { l: "Followers", v: totalFollowers, s: `${chData.length} channel${chData.length !== 1 ? "s" : ""}`, mag: 1e4 },
+                {
+                  l: "Total Views",
+                  v: totalViews,
+                  s: actualTab === "all" ? "All platforms" : PLAT_TAB_LABEL[actualTab] || actualTab,
+                  mag: 1e7,
+                },
+                { l: "Avg Views/Post", v: avgV, s: `${posts.length} posts`, mag: 1e6 },
+                { l: "Total Likes", v: totalLikes, s: "❤️ All content", mag: 1e6 },
+                { l: "Comments", v: totalComments, s: "💬 All content", mag: 1e6 },
+                {
+                  l: "Views / Follower",
+                  v: brandViewsPerFollowerK ?? 0,
+                  s: "Σ views ÷ Σ followers",
+                  decimal: true,
+                  suffix: "",
+                  plainDecimal: true,
+                },
+              ].map((k) => (
+                <div key={k.l} className="kcard">
+                  <div className="klbl">{k.l}</div>
+                  <div className="kval">
+                    {k.decimal ? (
+                      k.plainDecimal ? (
+                        brandViewsPerFollowerK == null ? (
+                          <span style={{ opacity: 0.55 }}>—</span>
+                        ) : dataReadyBrand ? (
+                          <>{brandViewsPerFollowerK.toFixed(2)}</>
+                        ) : (
+                          <RollingDecimalPair
+                            value={brandViewsPerFollowerK}
+                            spinning={!skipNumberAnim && !dataReadyBrand}
+                            skipAnimation={skipNumberAnim}
+                          />
+                        )
+                      ) : dataReadyBrand ? (
+                        <>
+                          {k.v.toFixed(2)}
+                          {k.suffix !== undefined ? k.suffix : "%"}
+                        </>
+                      ) : (
+                        <>
+                          <RollingNumber
+                            value={Math.floor(k.v)}
+                            spinning={!skipNumberAnim && !dataReadyBrand}
+                            magnitude={10}
+                            format="short"
+                            skipAnimation={skipNumberAnim}
+                          />
+                          {k.suffix !== undefined ? k.suffix : "%"}
+                        </>
+                      )
+                    ) : (
+                      <>
+                        <RollingNumber
+                          value={k.v}
+                          spinning={!skipNumberAnim && !dataReadyBrand}
+                          magnitude={k.mag}
+                          format="full"
+                          skipAnimation={skipNumberAnim}
+                        />
+                        {k.suffix || ""}
+                      </>
+                    )}
+                  </div>
+                  <div className="ksub">{k.s}</div>
+                </div>
               ))}
             </div>
 
@@ -1527,6 +1964,10 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
               <div className="panel" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
                 <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
                   <span className="ptitle">DAILY GROWTH</span>
+                  <span style={{ fontSize: 9, color: "#888", fontFamily: "DM Mono", whiteSpace: "nowrap" }}>
+                    <span style={{ color: "#ff6b6b" }} aria-hidden>■</span> Views (day) ·{" "}
+                    <span style={{ color: "#5ec8d0" }} aria-hidden>■</span> Followers (net/day)
+                  </span>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                     {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
                       <button
@@ -1544,7 +1985,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                 {viewsData.length > 0 ? (
                   <div style={{ flex: 1, minHeight: 0 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={viewsData} margin={{ top: 10, right: 32, bottom: 12, left: 2 }}>
+                      <ComposedChart data={viewsData} margin={{ top: 30, right: 44, bottom: 30, left: 2 }}>
                         <defs>
                           <linearGradient id="gv-brand" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
@@ -1561,43 +2002,59 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           height={26}
                         />
                         <YAxis
+                          yAxisId="left"
                           domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
-                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
+                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                           axisLine={false}
                           tickLine={false}
                           tickFormatter={fmtWhole}
                           width={40}
                         />
-                        <Tooltip content={<TTip />} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          domain={dailyGrowthFollowerYMax != null ? [0, dailyGrowthFollowerYMax] : [0, "auto"]}
+                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={fmtWhole}
+                          width={36}
+                        />
+                        <Tooltip content={TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                        {reliableSnapshotLineX && (
+                          <ReferenceLine
+                            yAxisId="left"
+                            x={reliableSnapshotLineX}
+                            stroke="rgba(245,242,237,0.45)"
+                            strokeWidth={1}
+                            strokeDasharray="4 4"
+                          />
+                        )}
                         <Area
+                          yAxisId="left"
                           type="monotone"
                           dataKey="views"
                           stroke="#ff6b6b"
                           strokeWidth={2}
                           fill="url(#gv-brand)"
-                          name="Views"
+                          name="Views (day)"
                           dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
                           activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                           isAnimationActive={false}
-                        >
-                          <LabelList
-                            dataKey="views"
-                            position="top"
-                            offset={4}
-                            formatter={(v) => fmtWhole(v)}
-                            style={{ fontFamily: "DM Mono", fontSize: dgLabelFontSize, fill: "#888" }}
-                          />
-                        </Area>
-                        {reliableSnapshotLineX && (
-                          <ReferenceLine
-                            x={reliableSnapshotLineX}
-                            stroke="rgba(245,242,237,0.45)"
-                            strokeWidth={1}
-                            strokeDasharray="4 4"
-                            isFront
-                          />
-                        )}
-                      </AreaChart>
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="followerGrowth"
+                          stroke="#5ec8d0"
+                          strokeWidth={2}
+                          name="Followers (net/day)"
+                          dot={{ r: 2, fill: "#5ec8d0", strokeWidth: 0 }}
+                          activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
+                          isAnimationActive={false}
+                        />
+                        <Customized component={DailyGrowthDualAxisLabels} />
+                      </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 ) : (
@@ -1704,8 +2161,7 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
   const handleSync = async (targetBrandId) => {
     if (!syncHandle.trim()) { setSyncError("Please enter a handle"); return; }
     if (!targetBrandId) { setSyncError("Please select a brand"); return; }
-    if (syncPlatform !== "instagram" && !apiKey) { setSyncError("API key required for YouTube and TikTok."); return; }
-    if (syncPlatform === "instagram" && !getInstagramToken(syncHandle.trim()) && !apiKey) { setSyncError("For new Instagram accounts, API key required. Configure Supabase or set VITE_SCRAPECREATORS_API_KEY."); return; }
+    if (!apiKey) { setSyncError("Configure Supabase (with SCRAPECREATORS_API_KEY in Edge secrets) or set VITE_SCRAPECREATORS_API_KEY."); return; }
     syncCancelledRef.current = false;
     setSyncLoading(true); setSyncError(null);
     try {
@@ -1775,7 +2231,10 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
                     <div key={key} className="arow" style={!isActive ? {opacity:.45} : undefined}>
                       <Pfp srcs={getChannelThumbs(d)} size={28} name={showName}/>
                       <div className="ainfo">
-                        <div className="ahandle">{showName}</div>
+                        <div className="ahandle-row">
+                          <span className="ahandle">{showName}</span>
+                          {rawHandle ? <span className="at-mention" title="Connected handle">{atMention(rawHandle)}</span> : null}
+                        </div>
                         <div className="atag">{!isActive ? `${pt} · deactivated` : d ? pt : "not synced"}</div>
                       </div>
                       <div className="ameta">
@@ -1800,7 +2259,14 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
                             {resyncKey === key ? <Spinner size={10} /> : "⟳"}
                           </button>
                         )}
-                        <button className="ibtn danger" onClick={async () => { removeChannel(key); await removeHandleFromBrand(b.id, rawHandle, rawPlat); }}>✕</button>
+                        <button className="ibtn danger" onClick={async () => {
+                          try {
+                            await removeHandleFromBrand(b.id, rawHandle, rawPlat);
+                            removeChannel(key);
+                          } catch (e) {
+                            setSyncError(e?.message || String(e));
+                          }
+                        }}>✕</button>
                       </div>
                     </div>
                   );
@@ -1857,7 +2323,7 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
             {syncError && <div style={{marginBottom:12,fontSize:11,color:"var(--red)"}}>{syncError}</div>}
             <div className="macts">
               <button className="ibtn" onClick={syncLoading ? cancelAddAccount : () => { setModal(null); setSyncHandle(""); setSyncBrandId(null); setSyncError(null); }}>Cancel</button>
-              <button className="ibtn primary" disabled={(syncPlatform !== "instagram" ? !apiKey : !apiKey && !getInstagramToken(syncHandle.trim())) || syncLoading} onClick={() => handleSync(syncBrandId)}>{syncLoading ? <span className="sync-loading"><Spinner/> Syncing…</span> : "ADD ACCOUNT"}</button>
+              <button className="ibtn primary" disabled={!apiKey || syncLoading} onClick={() => handleSync(syncBrandId)}>{syncLoading ? <span className="sync-loading"><Spinner/> Syncing…</span> : "ADD ACCOUNT"}</button>
             </div>
           </div>
         </div>
@@ -1909,7 +2375,14 @@ export default function App() {
     };
     if (isSupabaseConfigured()) {
       fetchBrandsWithChannels()
-        .then(res => loadAndRefetch(res.brands ?? [], res.channelMeta ?? {}))
+        .then(async (res) => {
+          try {
+            await pruneOrphanChannelCaches();
+          } catch (e) {
+            console.warn("pruneOrphanChannelCaches:", e);
+          }
+          await loadAndRefetch(res.brands ?? [], res.channelMeta ?? {});
+        })
         .catch(err => { console.error("Supabase brands load failed:", err); return loadAndRefetch(loadBrandsLocal()); })
         .finally(() => setBrandsLoading(false));
     } else {
@@ -1918,7 +2391,13 @@ export default function App() {
   }, [fetchChannel]);
 
   const addHandleToBrand = useCallback(async (brandId, handle, platform = "youtube", youtubeChannelId = null) => {
-    if (isSupabaseConfigured()) await dbAddChannelToBrand(brandId, handle, platform, youtubeChannelId);
+    if (isSupabaseConfigured()) {
+      await dbAddChannelToBrand(brandId, handle, platform, youtubeChannelId);
+      const res = await fetchBrandsWithChannels();
+      setBrands(res.brands ?? []);
+      setChannelMeta(res.channelMeta ?? {});
+      return;
+    }
     const key = ck(handle, platform);
     setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: [...new Set([...b.handles, key])], handleStatus: { ...b.handleStatus, [key]: true } } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, []);
@@ -1939,7 +2418,13 @@ export default function App() {
   }, [brands]);
 
   const removeHandleFromBrand = useCallback(async (brandId, handle, platform) => {
-    if (isSupabaseConfigured()) await dbRemoveChannelFromBrand(brandId, handle, platform);
+    if (isSupabaseConfigured()) {
+      await dbRemoveChannelFromBrand(brandId, handle, platform);
+      const res = await fetchBrandsWithChannels();
+      setBrands(res.brands ?? []);
+      setChannelMeta(res.channelMeta ?? {});
+      return;
+    }
     const key = ck(handle, platform);
     setBrands(prev => { const next = prev.map(b => b.id === brandId ? { ...b, handles: b.handles.filter(h => h !== key) } : b); if (!isSupabaseConfigured()) try { localStorage.setItem(BRANDS_KEY, JSON.stringify(next)); } catch {} return next; });
   }, []);
@@ -2025,12 +2510,7 @@ export default function App() {
         const p = (pk(k).platform || "youtube").toLowerCase();
         return p === "youtube" || p === "tiktok" || p === "instagram";
       });
-      const legacyIgKeys = allScKeys.filter((k) => {
-        if ((pk(k).platform || "").toLowerCase() !== "instagram") return false;
-        const { handle } = pk(k);
-        return channelMeta?.[k]?.hasLegacyInstagramToken || !!getInstagramToken(handle);
-      });
-      const batchKeys = allScKeys.filter((k) => !legacyIgKeys.includes(k));
+      const batchKeys = allScKeys;
 
       if (batchKeys.length > 0 && isSupabaseConfigured()) {
         try {
@@ -2071,17 +2551,6 @@ export default function App() {
           }
             setSyncProgress({ completed: i + 1, total });
         }
-      }
-
-      for (let i = 0; i < legacyIgKeys.length; i++) {
-        const key = legacyIgKeys[i];
-        const { handle, platform } = pk(key);
-        try {
-          await fetchChannel(handle, platform, true, true);
-        } catch (e) {
-          errs.push({ key, msg: e?.message || String(e) });
-        }
-        setSyncProgress({ completed: batchKeys.length + i + 1, total });
       }
 
       setSyncProgress({ completed: total, total });

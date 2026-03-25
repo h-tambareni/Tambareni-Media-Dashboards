@@ -11,7 +11,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SC_BASE = "https://api.scrapecreators.com";
-const IG_API = "https://graph.instagram.com/v25.0";
 const cors = { "Access-Control-Allow-Origin": "*" };
 
 type ChannelResult = {
@@ -106,7 +105,7 @@ Deno.serve(async (req) => {
       instagram_user_id?: string | null;
       active?: unknown;
     };
-    /** Instagram: same account can be stored twice (e.g. `lovelogic.podcast` vs `lovelogicpodcast`). Group by Graph user id when present; else fold dots so duplicate spellings share one nightly job + inactive gate. */
+    /** Instagram: same account can be stored twice (e.g. `lovelogic.podcast` vs `lovelogicpodcast`). Group by instagram_user_id when present; else fold dots so duplicate spellings share one nightly job + inactive gate. */
     function groupKeyForRow(r: BcRow): string {
       const h = (r.channel_handle || "").trim().toLowerCase().replace(/^@/, "");
       const p = normPlatform(r.platform);
@@ -129,52 +128,28 @@ Deno.serve(async (req) => {
     }
 
     const skippedInactive: string[] = [];
-    const unique = new Map<string, { handle: string; platform: string; instagramAccessToken?: string; instagramUserId?: string }>();
+    const unique = new Map<string, { handle: string; platform: string }>();
     for (const [key, rows] of groups) {
       if (rows.some((r) => !isChannelRowActive(r.active))) {
         skippedInactive.push(key);
         continue;
       }
-      // Prefer a row that carries an Instagram token for Graph API path
-      const sorted = [...rows].sort((a, b) => {
-        const ta = (a.instagram_access_token || "").trim() ? 1 : 0;
-        const tb = (b.instagram_access_token || "").trim() ? 1 : 0;
-        return tb - ta;
-      });
+      const sorted = [...rows];
       const r = sorted[0];
       const h = (r.channel_handle || "").trim().toLowerCase().replace(/^@/, "");
       const p = normPlatform(r.platform);
       // Map key for loop must stay handle::platform (used in logs + JSON); uid-grouped rows share one insert handle.
       const mapKey = `${h}::${p}`;
-      unique.set(mapKey, {
-        handle: h,
-        platform: p,
-        instagramAccessToken: (r.instagram_access_token || "").trim() || undefined,
-        instagramUserId: (r.instagram_user_id || "").trim() || undefined,
-      });
+      unique.set(mapKey, { handle: h, platform: p });
     }
     if (skippedInactive.length) {
       console.log(`[daily-sync] skipped (inactive on at least one brand_channels row): ${skippedInactive.length}`, skippedInactive.slice(0, 20));
     }
-    let igTokensRaw = "";
-    const { data: igRow } = await supabase.from("cron_config").select("value").eq("key", "instagram_tokens").single();
-    if (igRow?.value) igTokensRaw = String(igRow.value).trim();
-    if (!igTokensRaw) igTokensRaw = (Deno.env.get("INSTAGRAM_TOKENS") || "").trim();
-    const igTokenMap: Record<string, string> = {};
-    igTokensRaw.split(",").forEach((pair) => {
-      const sep = pair.indexOf(":");
-      if (sep > 0) {
-        const h = pair.slice(0, sep).trim().toLowerCase().replace(/^@/, "");
-        const t = pair.slice(sep + 1).trim();
-        if (h && t) igTokenMap[h] = t;
-      }
-    });
-
     console.log(`[daily-sync] channels to sync: ${unique.size}`);
 
     const results: ChannelResult[] = [];
 
-    for (const { handle, platform, instagramAccessToken, instagramUserId } of unique.values()) {
+    for (const { handle, platform } of unique.values()) {
       const platformNorm = normPlatform(platform);
       const key = `${handle}::${platformNorm}`;
       const warnings: string[] = [];
@@ -184,103 +159,38 @@ Deno.serve(async (req) => {
         let videoCount = 0;
 
         if (platformNorm === "instagram") {
-          const token = instagramAccessToken || igTokenMap[handle];
-          let me: { id?: string; username?: string; followers_count?: number; media_count?: number; error?: { message?: string } } | null = null;
-          if (token) {
-            const meRes = await fetch(
-              `${IG_API}/me?fields=id,username,followers_count,media_count&access_token=${token}`,
-            );
-            me = await meRes.json();
-            if (!meRes.ok) {
-              throw new Error(`Instagram /me HTTP ${meRes.status}: ${me?.error?.message || (await readBodySnippet(meRes))}`);
-            }
-          }
-          const tokenMatchesHandle =
-            me &&
-            !me.error &&
-            (
-              (instagramUserId && String(me.id) === String(instagramUserId)) ||
-              (me.username || "").trim().toLowerCase().replace(/^@/, "") === handle
-            );
-
-          if (tokenMatchesHandle && me?.id) {
-            followers = me.followers_count ?? 0;
-            videoCount = me.media_count ?? 0;
-            const userId = me.id;
-            const mediaRes = await fetch(
-              `${IG_API}/${userId}/media?fields=id,media_type&limit=50&access_token=${token}`,
-            );
-            const mediaData = await mediaRes.json();
-            if (!mediaRes.ok) {
-              throw new Error(`Instagram media list HTTP ${mediaRes.status}: ${mediaData?.error?.message || ""}`);
-            }
-            if (mediaData.error) throw new Error(mediaData.error.message);
-            const mediaList = mediaData.data || [];
-            let insightFailures = 0;
-            let videoReelInBatch = 0;
-            let videoReelInsightFails = 0;
-            for (const m of mediaList.slice(0, 25)) {
-              const mt = (m.media_type || "").toUpperCase();
-              const wantsViews = mt === "VIDEO" || mt === "REELS";
-              if (wantsViews) videoReelInBatch++;
-              const metrics = wantsViews ? "views,likes,comments" : "likes,comments";
-              const insRes = await fetch(`${IG_API}/${m.id}/insights?metric=${metrics}&access_token=${token}`);
-              const insData = await insRes.json();
-              if (!insRes.ok || insData.error) {
-                insightFailures++;
-                if (wantsViews) videoReelInsightFails++;
-                const msg = insData?.error?.message || `HTTP ${insRes.status}`;
-                console.warn(`[daily-sync] ${key} IG insight media=${m.id}: ${msg}`);
-                continue;
+          const profRes = await fetch(`${SC_BASE}/v1/instagram/profile?handle=${encodeURIComponent(handle)}`, { headers: { "x-api-key": scKey } });
+          const profData = await profRes.json();
+          if (!profRes.ok) throw new Error(profData?.message || `Instagram SC profile HTTP ${profRes.status}`);
+          const user = profData?.data?.user || profData?.user || profData;
+          const fb = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
+          const mc = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
+          followers = typeof fb === "number" ? fb : (fb?.count ?? 0);
+          videoCount = typeof mc === "number" ? mc : (mc?.count ?? 0);
+          let maxId: string | null = null;
+          let page = 0;
+          for (let p = 0; p < 30; p++) {
+            const postsUrl = new URL(`${SC_BASE}/v2/instagram/user/posts`);
+            postsUrl.searchParams.set("handle", handle);
+            if (maxId) postsUrl.searchParams.set("next_max_id", maxId);
+            const postsRes = await fetch(postsUrl.toString(), { headers: { "x-api-key": scKey } });
+            const postsData = await postsRes.json();
+            if (!postsRes.ok) {
+              if (page === 0) {
+                throw new Error(`Instagram SC posts HTTP ${postsRes.status}: ${postsData?.message || (await readBodySnippet(postsRes))}`);
               }
-              const byName: Record<string, number> = {};
-              (insData.data || []).forEach((d: { name: string; values: { value: string }[] }) => {
-                byName[d.name] = parseInt(d.values?.[0]?.value || "0", 10);
-              });
-              totalViews += byName.views ?? 0;
+              warnings.push(`Instagram SC posts page ${page} failed HTTP ${postsRes.status}, using partial sum`);
+              break;
             }
-            if (videoReelInBatch > 0 && totalViews === 0 && videoReelInsightFails >= videoReelInBatch) {
-              throw new Error(
-                `Instagram Graph: all ${videoReelInsightFails} video/reel insight call(s) failed — refusing to store total_views=0`,
-              );
+            const items = postsData?.items || postsData?.data || [];
+            for (const it of items) {
+              const b = it?.node || it;
+              totalViews += b?.play_count ?? b?.ig_play_count ?? b?.video_view_count ?? 0;
             }
-            if (insightFailures > 0) {
-              warnings.push(`Instagram: ${insightFailures} insight request(s) failed (partial total)`);
-            }
-          } else {
-            const profRes = await fetch(`${SC_BASE}/v1/instagram/profile?handle=${encodeURIComponent(handle)}`, { headers: { "x-api-key": scKey } });
-            const profData = await profRes.json();
-            if (!profRes.ok) throw new Error(profData?.message || `Instagram SC profile HTTP ${profRes.status}`);
-            const user = profData?.data?.user || profData?.user || profData;
-            const fb = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
-            const mc = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
-            followers = typeof fb === "number" ? fb : (fb?.count ?? 0);
-            videoCount = typeof mc === "number" ? mc : (mc?.count ?? 0);
-            let maxId: string | null = null;
-            let page = 0;
-            for (let p = 0; p < 30; p++) {
-              const postsUrl = new URL(`${SC_BASE}/v2/instagram/user/posts`);
-              postsUrl.searchParams.set("handle", handle);
-              if (maxId) postsUrl.searchParams.set("next_max_id", maxId);
-              const postsRes = await fetch(postsUrl.toString(), { headers: { "x-api-key": scKey } });
-              const postsData = await postsRes.json();
-              if (!postsRes.ok) {
-                if (page === 0) {
-                  throw new Error(`Instagram SC posts HTTP ${postsRes.status}: ${postsData?.message || (await readBodySnippet(postsRes))}`);
-                }
-                warnings.push(`Instagram SC posts page ${page} failed HTTP ${postsRes.status}, using partial sum`);
-                break;
-              }
-              const items = postsData?.items || postsData?.data || [];
-              for (const it of items) {
-                const b = it?.node || it;
-                totalViews += b?.play_count ?? b?.ig_play_count ?? b?.video_view_count ?? 0;
-              }
-              if (!postsData?.more_available || !items.length) break;
-              maxId = postsData?.next_max_id ?? postsData?.cursor ?? null;
-              if (!maxId) break;
-              page++;
-            }
+            if (!postsData?.more_available || !items.length) break;
+            maxId = postsData?.next_max_id ?? postsData?.cursor ?? null;
+            if (!maxId) break;
+            page++;
           }
         } else {
           const path = platformNorm === "tiktok" ? "/v1/tiktok/profile" : "/v1/youtube/channel";

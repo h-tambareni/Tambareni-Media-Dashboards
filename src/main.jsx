@@ -20,12 +20,12 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// StrictMode disabled: Recharts + ResponsiveContainer can throw removeChild errors in dev when
+// components mount twice. Production builds were unaffected.
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <YouTubeProvider>
-        <App />
-      </YouTubeProvider>
-    </ErrorBoundary>
-  </React.StrictMode>,
+  <ErrorBoundary>
+    <YouTubeProvider>
+      <App />
+    </YouTubeProvider>
+  </ErrorBoundary>,
 )

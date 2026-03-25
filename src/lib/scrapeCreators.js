@@ -2,36 +2,77 @@
  * ScrapeCreators API wrapper for YouTube, TikTok, and Instagram
  * Docs: https://docs.scrapecreators.com
  * When apiKey is null/empty and Supabase is configured, uses Edge Function proxy (keeps key server-side)
+ *
+ * Uses supabase.functions.invoke (not raw fetch) so the new sb_publishable_… key and JWT anon key
+ * both work — manual fetch + publishable key can return 404 from the Functions gateway.
  */
+
+import { supabase } from "./supabase";
 
 const BASE = "https://api.scrapecreators.com";
 
+/** Project ref from VITE_SUPABASE_URL (e.g. lbfkezeeqzaevvphevfa) — for error messages only. */
+function supabaseProjectRef() {
+  try {
+    const h = new URL((import.meta.env.VITE_SUPABASE_URL || "").trim()).hostname;
+    return h.split(".")[0] || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Shared by YouTube, TikTok, Instagram (and any future platform). `apiKey` null + Supabase env
+ * → proxy Edge Function; `apiKey` set → direct api.scrapecreators.com. Instagram-only Graph path
+ * was removed — IG always goes through this same helper.
+ */
+/** Prefer caller key, then .env — avoids Edge proxy when VITE key exists but parent passed "". */
+function resolveScrapeCreatorsKey(apiKey) {
+  const fromCaller = apiKey && String(apiKey).trim();
+  const fromEnv = (import.meta.env.VITE_SCRAPECREATORS_API_KEY || "").trim();
+  return fromCaller || fromEnv || "";
+}
+
 async function sc(path, params, apiKey) {
-  const useProxy = !apiKey && import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const directKey = resolveScrapeCreatorsKey(apiKey);
+  const useProxy = !directKey && import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
   let res, data;
   if (useProxy) {
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-    res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/scrapecreators-proxy`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${anonKey}`,
-        "apikey": anonKey,
-      },
-      body: JSON.stringify({ path: path.startsWith("/") ? path : `/${path}`, params: params || {} }),
-    });
-    data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errMsg = data?.error || data?.message || `Proxy: HTTP ${res.status}`;
-      if (res.status === 401) throw new Error(`${errMsg} (check SCRAPECREATORS_API_KEY in Supabase secrets or use VITE_SCRAPECREATORS_API_KEY in .env)`);
+    if (!supabase) {
+      throw new Error("ScrapeCreators: Supabase client not initialized (check VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY)");
+    }
+    const body = { path: path.startsWith("/") ? path : `/${path}`, params: params || {} };
+    const { data: proxyData, error: fnError } = await supabase.functions.invoke("scrapecreators-proxy", { body });
+    if (fnError) {
+      const status = fnError.context?.status ?? 0;
+      let detail = fnError.message;
+      try {
+        if (fnError.context && typeof fnError.context.json === "function") {
+          const j = await fnError.context.json();
+          if (j?.error || j?.message) detail = j.error || j.message;
+        }
+      } catch {
+        /* ignore */
+      }
+      const errMsg = detail || `Proxy: HTTP ${status}`;
+      const ref = supabaseProjectRef();
+      const dash = ref ? `https://supabase.com/dashboard/project/${ref}/functions` : "Supabase Dashboard → Edge Functions";
+      if (status === 401) throw new Error(`${errMsg} (check SCRAPECREATORS_API_KEY in Supabase secrets or use VITE_SCRAPECREATORS_API_KEY in .env)`);
+      if (status === 404) {
+        throw new Error(
+          `ScrapeCreators proxy 404 — Supabase is not serving "scrapecreators-proxy" for project ${ref || "(check VITE_SUPABASE_URL)"}. ` +
+            `Open ${dash} and confirm that function name exists (not only the secret). Migrations do not deploy functions; run: supabase functions deploy scrapecreators-proxy ` +
+            `from this repo. Or set VITE_SCRAPECREATORS_API_KEY in .env to skip the proxy.`
+        );
+      }
       throw new Error(errMsg);
     }
-    return data;
+    return proxyData;
   }
-  if (!apiKey) throw new Error("ScrapeCreators: Set VITE_SCRAPECREATORS_API_KEY or configure Supabase + SCRAPECREATORS_API_KEY secret");
+  if (!directKey) throw new Error("ScrapeCreators: Set VITE_SCRAPECREATORS_API_KEY or configure Supabase + SCRAPECREATORS_API_KEY secret");
   const sp = new URLSearchParams(params);
   const url = `${BASE}${path}?${sp}`;
-  res = await fetch(url, { headers: { "x-api-key": apiKey } });
+  res = await fetch(url, { headers: { "x-api-key": directKey } });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const code = res.status;
@@ -272,15 +313,22 @@ export async function fetchIGProfile(apiKey, handle) {
   const raw = await sc("/v1/instagram/profile", { handle: clean }, apiKey);
   const data = raw?.data || raw;
   const user = data?.user || data;
+  // v1 may resolve typo handles; v2 posts need the *canonical* username from the response.
+  const usernameFromApi =
+    (user?.username && String(user.username).replace(/^@/, "").trim()) ||
+    (data?.username && String(data.username).replace(/^@/, "").trim()) ||
+    (raw?.username && String(raw.username).replace(/^@/, "").trim()) ||
+    clean;
+  const id = user?.id ?? user?.pk ?? data?.id ?? raw?.id ?? null;
   const followedBy = user?.edge_followed_by?.count ?? user?.edge_followed_by ?? 0;
   const mediaCount = user?.edge_owner_to_timeline_media?.count ?? user?.edge_owner_to_timeline_media ?? 0;
   const followers = typeof followedBy === "number" ? followedBy : (followedBy?.count ?? 0);
   const videoCount = typeof mediaCount === "number" ? mediaCount : (mediaCount?.count ?? 0);
   const thumb = user?.profile_pic_url_hd || user?.profile_pic_url || user?.hd_profile_pic_url_info?.url || data?.profile_pic_url || null;
   return {
-    id: user?.id,
-    handle: (user?.username || clean).replace(/^@/, ""),
-    title: user?.full_name || user?.username || handle,
+    id: id != null ? String(id) : undefined,
+    handle: usernameFromApi,
+    title: user?.full_name || user?.username || usernameFromApi || handle,
     subscribers: followers,
     videoCount,
     thumbnail: thumb,
@@ -312,16 +360,55 @@ function mapIGPost(item, handle) {
   };
 }
 
+/** ScrapeCreators v2 posts can 404 on typo / alternate spellings of handle while v1 profile still returns 200. */
+function isPostsNotFoundError(e) {
+  const s = String(e?.message || e);
+  // Supabase proxy missing (function not deployed) — must not trigger IG "retry with user_id" logic.
+  if (/scrapecreators-proxy|not serving.*scrapecreators-proxy|functions deploy/i.test(s)) return false;
+  return /404|not found|HTTP 404|ScrapeCreators API:/i.test(s);
+}
+
+/**
+ * @param {string} apiKey
+ * @param {string} handle
+ * @param {{ fullFetch?: boolean, userId?: string | number | null }} [opts]
+ * `userId` = Instagram numeric id from `/v1/instagram/profile` — used when `handle` alone gets 404 on posts.
+ */
 export async function fetchIGPosts(apiKey, handle, opts = {}) {
-  const { fullFetch = false } = opts;
+  const { fullFetch = false, userId = null } = opts;
   const clean = (handle || "").replace(/^@/, "");
+  const uid = userId != null && String(userId).trim() !== "" ? String(userId).trim() : null;
   const all = [];
   let maxId = null;
+  /** Which param shape worked for page 0 (must stay consistent for pagination). */
+  let mode = /** @type {null | "handle" | "uid" | "both"} */ (null);
   const MAX_PAGES = fullFetch ? 50 : 1;
+
+  const fetchPostsPage = async () => {
+    const base = maxId ? { next_max_id: maxId } : {};
+    if (mode === "handle") return sc("/v2/instagram/user/posts", { handle: clean, ...base }, apiKey);
+    if (mode === "uid") return sc("/v2/instagram/user/posts", { user_id: uid, ...base }, apiKey);
+    if (mode === "both") return sc("/v2/instagram/user/posts", { handle: clean, user_id: uid, ...base }, apiKey);
+    try {
+      const data = await sc("/v2/instagram/user/posts", { handle: clean, ...base }, apiKey);
+      mode = "handle";
+      return data;
+    } catch (e) {
+      if (!uid || !isPostsNotFoundError(e)) throw e;
+      try {
+        const data = await sc("/v2/instagram/user/posts", { user_id: uid, ...base }, apiKey);
+        mode = "uid";
+        return data;
+      } catch (e2) {
+        const data = await sc("/v2/instagram/user/posts", { handle: clean, user_id: uid, ...base }, apiKey);
+        mode = "both";
+        return data;
+      }
+    }
+  };
+
   for (let page = 0; page < MAX_PAGES; page++) {
-    const params = { handle: clean };
-    if (maxId) params.next_max_id = maxId;
-    const data = await sc("/v2/instagram/user/posts", params, apiKey);
+    const data = await fetchPostsPage();
     const list = data?.items || data?.data || [];
     if (list.length) {
       for (const item of list) {

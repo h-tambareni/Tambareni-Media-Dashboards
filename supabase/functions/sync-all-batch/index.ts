@@ -293,16 +293,48 @@ function mapIGPost(item: any, _handle: string): any {
   };
 }
 
-async function fetchIGPosts(apiKey: string, handle: string, opts: { fullFetch: boolean }): Promise<any[]> {
-  const { fullFetch } = opts;
+async function fetchIGPosts(
+  apiKey: string,
+  handle: string,
+  opts: { fullFetch: boolean; userId?: string | number | null },
+): Promise<any[]> {
+  const { fullFetch, userId } = opts;
   const clean = (handle || "").replace(/^@/, "");
+  const uid = userId != null && String(userId).trim() !== "" ? String(userId).trim() : null;
   const all: any[] = [];
   let maxId: string | null = null;
+  let mode: null | "handle" | "uid" | "both" = null;
   const MAX_PAGES = fullFetch ? 50 : 1;
+
+  const is404 = (e: unknown) => /404|not found|HTTP 404/i.test(String(e instanceof Error ? e.message : e));
+
   for (let page = 0; page < MAX_PAGES; page++) {
-    const params: Record<string, string> = { handle: clean };
-    if (maxId) params.next_max_id = maxId;
-    const data = await sc("/v2/instagram/user/posts", params, apiKey);
+    const base: Record<string, string> = {};
+    if (maxId) base.next_max_id = maxId;
+
+    let data: any;
+    if (mode === "handle") {
+      data = await sc("/v2/instagram/user/posts", { handle: clean, ...base }, apiKey);
+    } else if (mode === "uid") {
+      data = await sc("/v2/instagram/user/posts", { user_id: uid!, ...base }, apiKey);
+    } else if (mode === "both") {
+      data = await sc("/v2/instagram/user/posts", { handle: clean, user_id: uid!, ...base }, apiKey);
+    } else {
+      try {
+        data = await sc("/v2/instagram/user/posts", { handle: clean, ...base }, apiKey);
+        mode = "handle";
+      } catch (e) {
+        if (!uid || !is404(e)) throw e;
+        try {
+          data = await sc("/v2/instagram/user/posts", { user_id: uid, ...base }, apiKey);
+          mode = "uid";
+        } catch {
+          data = await sc("/v2/instagram/user/posts", { handle: clean, user_id: uid, ...base }, apiKey);
+          mode = "both";
+        }
+      }
+    }
+
     const list = data?.items || data?.data || [];
     if (list.length) {
       for (const item of list) {
@@ -336,7 +368,7 @@ async function syncOne(
       videos = await fetchTTProfileVideos(apiKey, ch.handle || handle, { fullFetch: true, userId: ch.id });
     } else if (platform === "instagram") {
       ch = await fetchIGProfile(apiKey, handle);
-      videos = await fetchIGPosts(apiKey, ch.handle || handle, { fullFetch: true });
+      videos = await fetchIGPosts(apiKey, ch.handle || handle, { fullFetch: true, userId: ch.id ?? null });
     } else {
       ch = await fetchYTChannel(apiKey, handle, { channelId: item.youtubeChannelId });
       videos = await fetchYTChannelVideos(apiKey, handle, {

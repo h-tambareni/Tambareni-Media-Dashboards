@@ -1,5 +1,5 @@
 /**
- * Platform context — fetches channel + video data via ScrapeCreators API + Instagram Edge Functions.
+ * Platform context — fetches channel + video data via ScrapeCreators API (all platforms).
  * Supports YouTube, TikTok, and Instagram. Caches snapshots in Supabase channel_cache.
  * Daily Growth reads `daily_snapshots` from Supabase (written only by the nightly `daily-sync` cron — not on app sync).
  *
@@ -7,7 +7,6 @@
  */
 import { createContext, useContext, useState, useCallback } from "react";
 import { fetchYTChannel, fetchYTChannelVideos, fetchTTProfile, fetchTTProfileVideos, fetchIGProfile, fetchIGPosts } from "../lib/scrapeCreators";
-import { fetchInstagramDirect, getInstagramToken } from "../lib/instagramApi";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
@@ -75,65 +74,13 @@ export function YouTubeProvider({ children }) {
           let entry;
 
           if (plat === "instagram") {
-            const envToken = getInstagramToken(handle);
-            if (envToken) {
-              const raw = await fetchInstagramDirect(handle);
-              const posts = (raw.posts || []).map(p => ({ ...p, emoji: "📷" }));
-              const lastPost = posts[0];
-              const avgV = posts.length ? Math.round(posts.reduce((s, x) => s + (x.views || 0), 0) / posts.length) : 0;
-              entry = {
-                channel: raw.channel,
-                platform: {
-                  ...raw.platform,
-                  avgViews: avgV >= 1000 ? (avgV / 1000).toFixed(1) + "K" : String(avgV),
-                  status: "active",
-                  last: lastPost?.publishedAt ? formatTimeAgo(lastPost.publishedAt) : "—",
-                },
-                posts,
-                totalViews: raw.totalViews ?? 0,
-                dailyViews: raw.dailyViews || [],
-              };
-            } else if (isSupabaseConfigured()) {
-              const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-              const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-              const igRes = await fetch(`${supabaseUrl}/functions/v1/instagram-fetch`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${anonKey}`,
-                  "apikey": anonKey,
-                },
-                body: JSON.stringify({ compositeKey }),
-              });
-              if (igRes.ok) {
-                const raw = await igRes.json();
-                const posts = (raw.posts || []).map(p => ({ ...p, emoji: "📷" }));
-                const lastPost = posts[0];
-                const avgV = posts.length ? Math.round(posts.reduce((s, x) => s + (x.views || 0), 0) / posts.length) : 0;
-                entry = {
-                  channel: raw.channel,
-                  platform: {
-                    ...raw.platform,
-                    avgViews: avgV >= 1000 ? (avgV / 1000).toFixed(1) + "K" : String(avgV),
-                    status: "active",
-                    last: lastPost?.publishedAt ? formatTimeAgo(lastPost.publishedAt) : "—",
-                  },
-                  posts,
-                  totalViews: raw.totalViews ?? 0,
-                  dailyViews: raw.dailyViews || [],
-                };
-              } else {
-                if (!scKey && scKey !== null) throw new Error("Configure Supabase or set VITE_SCRAPECREATORS_API_KEY");
-                const ch = await fetchIGProfile(scKey, handle);
-                const videos = await fetchIGPosts(scKey, ch.handle || handle, { fullFetch: needsFullFetch });
-                entry = buildEntryFromVideos(ch, videos, handle, plat, cachedSnap, needsFullFetch);
-              }
-            } else {
-              if (!scKey && scKey !== null) throw new Error("Configure Supabase or set VITE_SCRAPECREATORS_API_KEY");
-              const ch = await fetchIGProfile(scKey, handle);
-              const videos = await fetchIGPosts(scKey, ch.handle || handle, { fullFetch: needsFullFetch });
-              entry = buildEntryFromVideos(ch, videos, handle, plat, cachedSnap, needsFullFetch);
-            }
+            if (!scKey && scKey !== null) throw new Error("Configure Supabase or set VITE_SCRAPECREATORS_API_KEY");
+            const ch = await fetchIGProfile(scKey, handle);
+            const videos = await fetchIGPosts(scKey, ch.handle || handle, {
+              fullFetch: needsFullFetch,
+              userId: ch.id ?? null,
+            });
+            entry = buildEntryFromVideos(ch, videos, handle, plat, cachedSnap, needsFullFetch);
             if (entry) {
               let dailyViews = [];
               if (isSupabaseConfigured()) {
@@ -142,15 +89,14 @@ export function YouTubeProvider({ children }) {
                   d: formatChartDate(row.snapshot_date),
                   raw: row.snapshot_date,
                   views: row.total_views,
+                  followers: row.followers ?? 0,
                 }));
                 entry = { ...entry, dailyViews };
               }
               setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
               setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
-              const canonicalHandle = entry?.channel?.handle || entry?.platform?.handle || handle;
-              const canonicalKey = ck(canonicalHandle, plat);
               if (isSupabaseConfigured()) {
-                upsertChannelCache(canonicalKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
+                upsertChannelCache(compositeKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
               }
               return entry;
             }
@@ -235,6 +181,7 @@ export function YouTubeProvider({ children }) {
               d: formatChartDate(row.snapshot_date),
               raw: row.snapshot_date,
               views: row.total_views,
+              followers: row.followers ?? 0,
             }));
           }
 
@@ -248,9 +195,7 @@ export function YouTubeProvider({ children }) {
           setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
 
           if (isSupabaseConfigured()) {
-            const canonicalHandle = ch?.handle || handle;
-            const canonicalKey = ck(canonicalHandle, plat);
-            upsertChannelCache(canonicalKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
+            upsertChannelCache(compositeKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
             if (plat === "youtube" && ch?.id) updateBrandChannelYoutubeId(handle, plat, ch.id).catch(() => {});
           }
           return entry;
@@ -296,6 +241,7 @@ export function YouTubeProvider({ children }) {
                 d: formatChartDate(row.snapshot_date),
                 raw: row.snapshot_date,
                 views: row.total_views,
+                followers: row.followers ?? 0,
               })),
             };
           }

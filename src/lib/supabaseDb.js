@@ -5,7 +5,9 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 
 export const CK_SEP = "::";
 const norm = (h) => (h || "").toString().trim().toLowerCase().replace(/^@/, "");
-export const ck = (handle, platform) => `${norm(handle)}${CK_SEP}${(platform || "youtube")}`;
+/** Always lowercase platform segment so `::youtube` and `::YouTube` are the same key. */
+export const ck = (handle, platform) =>
+  `${norm(handle)}${CK_SEP}${String(platform || "youtube").toLowerCase()}`;
 export const pk = (compositeKey) => {
   const i = (compositeKey || "").lastIndexOf(CK_SEP);
   if (i > 0) return { handle: compositeKey.slice(0, i), platform: compositeKey.slice(i + CK_SEP.length) };
@@ -48,7 +50,6 @@ export async function fetchBrandsWithChannels() {
       platform: plat,
       youtubeChannelId: row.youtube_channel_id,
       active: row.active !== false,
-      hasLegacyInstagramToken: plat === "instagram" && !!(row.instagram_access_token || "").trim(),
     };
     if (plat === "youtube" && !row.youtube_channel_id) ytKeysNeedingCache.push(key);
   });
@@ -93,23 +94,20 @@ export async function deleteBrand(id) {
 export async function addChannelToBrand(brandId, channelHandle, platform = "youtube", youtubeChannelId = null) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
   const h = norm(channelHandle);
+  if (!h) throw new Error("Invalid channel handle");
+  const plat = String(platform || "youtube").toLowerCase();
   const { data, error } = await supabase
     .from("brand_channels")
-    .insert({ brand_id: brandId, channel_handle: h, platform, youtube_channel_id: youtubeChannelId })
+    .insert({ brand_id: brandId, channel_handle: h, platform: plat, youtube_channel_id: youtubeChannelId })
     .select()
     .single();
-  if (error) throw error;
+  if (error) {
+    // Unique violation: already linked to this brand — treat as success so UI can refetch.
+    const msg = String(error.message || "");
+    if (error.code === "23505" || /duplicate key|unique constraint/i.test(msg)) return null;
+    throw error;
+  }
   return data;
-}
-
-export async function removeChannelFromBrand(brandId, channelHandle, platform) {
-  if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const h = norm(channelHandle) || channelHandle;
-  const handles = [...new Set([h, channelHandle].filter(Boolean))];
-  let q = supabase.from("brand_channels").delete().eq("brand_id", brandId).in("channel_handle", handles);
-  if (platform) q = q.eq("platform", platform);
-  const { error } = await q;
-  if (error) throw error;
 }
 
 /** Same as daily-sync igfold: Instagram handles may differ only by dots (`lovelogic.podcast` vs `lovelogicpodcast`). */
@@ -117,9 +115,68 @@ export function igFoldHandle(h) {
   return norm(h).replace(/\./g, "");
 }
 
+/**
+ * Resolve brand_channels rows for a handle (same rules as toggleChannelActive):
+ * dot-fold for Instagram, multiple handle spellings in `candidates`.
+ */
+async function selectBrandChannelRowsForRemoval(brandId, channelHandle, platform) {
+  const plat = String(platform || "youtube").toLowerCase();
+  const nh = norm(channelHandle);
+  const trimmed = (channelHandle || "").trim().replace(/^@/, "");
+  let candidates = [...new Set([nh, trimmed, trimmed.toLowerCase(), channelHandle].filter(Boolean))];
+  if (plat === "instagram") {
+    const fold = igFoldHandle(channelHandle);
+    if (fold && !candidates.includes(fold)) candidates.push(fold);
+  }
+
+  let { data: rows, error: qErr } = await supabase
+    .from("brand_channels")
+    .select("id, channel_handle, instagram_user_id")
+    .eq("brand_id", brandId)
+    .eq("platform", plat)
+    .in("channel_handle", candidates);
+  if (qErr) throw qErr;
+
+  if (plat === "instagram" && (!rows || rows.length === 0)) {
+    const { data: allIg, error: allErr } = await supabase
+      .from("brand_channels")
+      .select("id, channel_handle, instagram_user_id")
+      .eq("brand_id", brandId)
+      .eq("platform", "instagram");
+    if (allErr) throw allErr;
+    const t = igFoldHandle(channelHandle);
+    rows = (allIg || []).filter((r) => igFoldHandle(r.channel_handle) === t);
+  }
+
+  if (!rows?.length) return [];
+
+  const ids = new Set(rows.map((r) => r.id));
+  const uids = [...new Set(rows.map((r) => r.instagram_user_id).filter(Boolean))];
+  if (plat === "instagram" && uids.length) {
+    const { data: sib, error: sErr } = await supabase
+      .from("brand_channels")
+      .select("id")
+      .eq("brand_id", brandId)
+      .eq("platform", "instagram")
+      .in("instagram_user_id", uids);
+    if (sErr) throw sErr;
+    (sib || []).forEach((r) => ids.add(r.id));
+  }
+
+  return [...ids];
+}
+
+export async function removeChannelFromBrand(brandId, channelHandle, platform) {
+  if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
+  const ids = await selectBrandChannelRowsForRemoval(brandId, channelHandle, platform);
+  if (!ids.length) return;
+  const { error } = await supabase.from("brand_channels").delete().in("id", ids);
+  if (error) throw error;
+}
+
 export async function toggleChannelActive(brandId, channelHandle, platform, active) {
   if (!isSupabaseConfigured()) throw new Error("Supabase not configured");
-  const plat = platform || "youtube";
+  const plat = String(platform || "youtube").toLowerCase();
   const nh = norm(channelHandle);
   const trimmed = (channelHandle || "").trim().replace(/^@/, "");
   // Match DB row whether it was stored lowercased or legacy casing; avoid .ilike() — _ and % are LIKE wildcards.
@@ -258,21 +315,93 @@ export function parseCachedSnapshot(cached) {
   return snap;
 }
 
+/**
+ * Map a requested cache key (may come from API canonical handle) to the single key stored in `brand_channels`.
+ * Returns null if this account is not in connected brands — then we must not write channel_cache.
+ */
+export function canonicalCacheKeyFor(channelHandle, brandRows) {
+  if (!channelHandle || !brandRows?.length) return null;
+  const { handle, platform } = pk(channelHandle);
+  const n = norm(handle);
+  const pWant = String(platform || "youtube").toLowerCase();
+  for (const r of brandRows) {
+    const rp = String(r.platform || "youtube").toLowerCase();
+    if (rp !== pWant) continue;
+    if (norm(r.channel_handle) === n) return ck(r.channel_handle, rp);
+    if (pWant === "instagram" && igFoldHandle(r.channel_handle) === igFoldHandle(handle)) {
+      return ck(r.channel_handle, rp);
+    }
+  }
+  return null;
+}
+
+async function fetchBrandChannelsRows() {
+  const { data, error } = await supabase.from("brand_channels").select("channel_handle, platform");
+  if (error) throw error;
+  return data || [];
+}
+
 export async function deleteChannelCache(channelHandle) {
   if (!isSupabaseConfigured()) return;
-  await supabase.from("channel_cache").delete().eq("channel_handle", channelHandle);
+  let rows;
+  try {
+    rows = await fetchBrandChannelsRows();
+  } catch {
+    rows = [];
+  }
+  const canonical = canonicalCacheKeyFor(channelHandle, rows);
+  const keys = new Set([channelHandle, canonical].filter(Boolean));
+  for (const k of keys) {
+    await supabase.from("channel_cache").delete().eq("channel_handle", k);
+  }
 }
 
 export async function upsertChannelCache(channelHandle, snapshot) {
   if (!isSupabaseConfigured()) return;
-  await supabase.from("channel_cache").upsert({
-    channel_handle: channelHandle,
-    youtube_channel_id: snapshot.channel?.id || null,
-    subscribers: snapshot.channel?.subscribers ?? 0,
-    video_count: snapshot.channel?.videoCount ?? 0,
-    raw_platform_json: snapshot,
-    last_synced_at: new Date().toISOString(),
-  }, { onConflict: "channel_handle" });
+  let brandRows;
+  try {
+    brandRows = await fetchBrandChannelsRows();
+  } catch {
+    return;
+  }
+  const canonical = canonicalCacheKeyFor(channelHandle, brandRows);
+  if (!canonical) return;
+  await supabase.from("channel_cache").upsert(
+    {
+      channel_handle: canonical,
+      youtube_channel_id: snapshot.channel?.id || null,
+      subscribers: snapshot.channel?.subscribers ?? 0,
+      video_count: snapshot.channel?.videoCount ?? 0,
+      raw_platform_json: snapshot,
+      last_synced_at: new Date().toISOString(),
+    },
+    { onConflict: "channel_handle" }
+  );
+}
+
+/** Remove channel_cache rows that do not match any row in brand_channels (and drop duplicate spellings vs canonical). */
+export async function pruneOrphanChannelCaches() {
+  if (!isSupabaseConfigured()) return { deleted: 0 };
+  let brandRows;
+  try {
+    brandRows = await fetchBrandChannelsRows();
+  } catch {
+    return { deleted: 0 };
+  }
+  const { data: caches, error: cErr } = await supabase.from("channel_cache").select("channel_handle");
+  if (cErr) return { deleted: 0 };
+  const toDelete = new Set();
+  for (const c of caches || []) {
+    const ch = c.channel_handle;
+    const canonical = canonicalCacheKeyFor(ch, brandRows);
+    if (!canonical) toDelete.add(ch);
+    else if (canonical !== ch) toDelete.add(ch);
+  }
+  const ids = [...toDelete];
+  if (!ids.length) return { deleted: 0 };
+  const { error } = await supabase.from("channel_cache").delete().in("channel_handle", ids);
+  if (error) throw error;
+  return { deleted: ids.length };
 }
 
 // ─── Daily snapshots (for views-over-time chart) ───────────────────────────
