@@ -15,7 +15,9 @@
       "Bash(__NEW_LINE_511cb16eabe78f2c__ echo:*)",
       "Bash(curl -sk -X POST \"$SUPABASE_URL/rest/v1/cron_config\" -H \"apikey: $ANON_KEY\" -H \"Authorization: Bearer $ANON_KEY\" -H \"Content-Type: application/json\" -H \"Prefer: resolution=merge-duplicates\" -d '{\"\"key\"\":\"\"test_write\"\",\"\"value\"\":\"\"test\"\"}')",
       "Bash(curl -sk -X POST \"$SUPABASE_URL/rest/v1/rpc/touch_last_manual_sync\" -H \"apikey: $ANON_KEY\" -H \"Authorization: Bearer $ANON_KEY\" -H \"Content-Type: application/json\" -d '{}')",
-      "Bash(curl -sk \"$SUPABASE_URL/rest/v1/cron_config?select=key,value\" -H \"apikey: $ANON_KEY\" -H \"Authorization: Bearer $ANON_KEY\")"
+      "Bash(curl -sk \"$SUPABASE_URL/rest/v1/cron_config?select=key,value\" -H \"apikey: $ANON_KEY\" -H \"Authorization: Bearer $ANON_KEY\")",
+      "Bash(grep -r daily_snapshots /c/Users/harik/Tambareni-Media-Dashboards/src --include=*.tsx --include=*.ts -l)",
+      "Bash(find /c/Users/harik/Tambareni-Media-Dashboards/.claude/worktrees/exciting-elion/src -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))"
     ]
   }
 }
