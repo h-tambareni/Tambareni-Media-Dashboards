@@ -467,10 +467,12 @@ export async function fetchDailySnapshots(channelHandle, platform, days = null) 
   return pickLatestSnapshotsPerDay(data ?? []);
 }
 
-/** Records Sync All completion using Postgres time via RPC (not browser clock). */
+/** Records Sync All completion time in cron_config (ISO 8601, same format as daily-sync). */
 export async function upsertLastManualSync() {
   if (!isSupabaseConfigured()) return;
-  const { error } = await supabase.rpc("touch_last_manual_sync");
+  const { error } = await supabase
+    .from("cron_config")
+    .upsert({ key: "last_manual_sync", value: new Date().toISOString() }, { onConflict: "key" });
   if (error) console.warn("[upsertLastManualSync]", error.message);
 }
 

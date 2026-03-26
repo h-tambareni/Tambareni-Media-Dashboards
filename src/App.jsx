@@ -2729,6 +2729,7 @@ function App() {
     } catch { return false; }
   });
   const [lastSync, setLastSync] = useState(null);
+  const refreshGenRef = useRef(0);
   const [syncErrors, setSyncErrors] = useState([]);
   const [syncProgress, setSyncProgress] = useState({ completed: 0, total: 0 });
   const [syncElapsed, setSyncElapsed] = useState(0);
@@ -2739,8 +2740,14 @@ function App() {
       setLastSync(null);
       return;
     }
+    const gen = ++refreshGenRef.current;
     const dbTime = await fetchLastSyncTime().catch(() => null);
-    setLastSync(dbTime);
+    if (gen !== refreshGenRef.current) return;
+    setLastSync(prev => {
+      if (!dbTime) return prev;
+      if (!prev || dbTime > prev) return dbTime;
+      return prev;
+    });
   }, []);
 
   useEffect(() => {
@@ -2823,6 +2830,8 @@ function App() {
       setSyncProgress({ completed: total, total });
       setSyncErrors(errs);
       if (isSupabaseConfigured()) {
+        refreshGenRef.current++;
+        setLastSync(new Date());
         await upsertLastManualSync();
         await refreshLastSync();
       }
