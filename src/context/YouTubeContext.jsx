@@ -61,7 +61,18 @@ export function YouTubeProvider({ children }) {
             if (!forceRefresh && cachedSnap) {
               setChannels((prev) => ({ ...prev, [compositeKey]: cachedSnap }));
               setConnectedHandles((prev) => (prev.includes(compositeKey) ? prev : [...prev, compositeKey]));
-              if (isCacheFresh(cached)) return cachedSnap;
+              const postsEarly = cachedSnap?.posts || [];
+              const declaredEarly =
+                plat === "instagram" || plat === "tiktok" || plat === "youtube"
+                  ? (cachedSnap?.channel?.videoCount ?? 0)
+                  : 0;
+              /** Even if last_synced is “fresh”, refetch when catalog is clearly thinner than profile count (legacy partial sync). */
+              const mustBackfillCatalog =
+                declaredEarly > 0 &&
+                postsEarly.length > 0 &&
+                postsEarly.length < declaredEarly &&
+                postsEarly.length <= 150;
+              if (isCacheFresh(cached) && !mustBackfillCatalog) return cachedSnap;
             }
           }
 
@@ -69,7 +80,22 @@ export function YouTubeProvider({ children }) {
           const cachedPosts = cachedSnap?.posts || [];
           const lastFullFetch = cachedSnap?.last_full_fetch_at ? new Date(cachedSnap.last_full_fetch_at) : null;
           const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
-          const needsFullFetch = forceFullFetch || cachedPosts.length === 0 || !lastFullFetch || lastFullFetch.getTime() < weekAgo;
+          /** Profile media/video count vs cached rows — refetch full catalog if we only have a thin slice (e.g. legacy 1-page cache). */
+          const declaredMediaCount =
+            plat === "instagram" || plat === "tiktok" || plat === "youtube"
+              ? (cachedSnap?.channel?.videoCount ?? 0)
+              : 0;
+          const catalogLikelyIncomplete =
+            declaredMediaCount > 0 &&
+            cachedPosts.length > 0 &&
+            cachedPosts.length < declaredMediaCount &&
+            cachedPosts.length <= 150;
+          const needsFullFetch =
+            forceFullFetch ||
+            cachedPosts.length === 0 ||
+            !lastFullFetch ||
+            lastFullFetch.getTime() < weekAgo ||
+            catalogLikelyIncomplete;
 
           let entry;
 
@@ -257,8 +283,12 @@ export function YouTubeProvider({ children }) {
         const added = withDaily.map((x) => x.key).filter((k) => !prev.includes(k));
         return added.length ? [...prev, ...added] : prev;
       });
+      await Promise.all(
+        withDaily.map(({ key, entry }) =>
+          upsertChannelCache(key, entry).then(() => notifyChannelCacheUpdated()).catch(() => {})
+        )
+      );
       for (const { key, entry } of withDaily) {
-        upsertChannelCache(key, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
         if (entry.channel?.platform === "youtube" && entry.channel?.id) {
           const { handle, platform } = pk(key);
           updateBrandChannelYoutubeId(handle, platform, entry.channel.id).catch(() => {});

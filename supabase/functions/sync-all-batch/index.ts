@@ -53,6 +53,48 @@ async function sc(path: string, params: Record<string, string | number | undefin
   return data;
 }
 
+function coerceScInt(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.floor(v));
+  const n = parseInt(String(v).replace(/,/g, "").trim(), 10);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function ytShareCount(v: any): number {
+  return Math.max(
+    coerceScInt(v?.shares),
+    coerceScInt(v?.shareCount),
+    coerceScInt(v?.share_count),
+    coerceScInt(v?.statistics?.shareCount),
+    coerceScInt(v?.statistics?.share_count),
+    coerceScInt(v?.engagement?.shares),
+    coerceScInt(v?.engagement?.shareCount),
+    coerceScInt(v?.social?.shares),
+    coerceScInt(v?.metrics?.shares),
+  );
+}
+
+function igLikeCount(base: any): number {
+  return Math.max(
+    coerceScInt(base?.like_count),
+    coerceScInt(base?.edge_media_preview_like?.count),
+    coerceScInt(base?.edge_liked_by?.count),
+  );
+}
+
+function igShareCount(base: any): number {
+  return Math.max(
+    coerceScInt(base?.share_count),
+    coerceScInt(base?.fb_share_count),
+    coerceScInt(base?.video_share_count),
+    coerceScInt(base?.reshare_count),
+    coerceScInt(base?.republish_count),
+    coerceScInt(base?.edge_media_to_share_count?.count),
+    coerceScInt(base?.media_share_count),
+    coerceScInt(base?.social_share_count),
+  );
+}
+
 // ─── YouTube ───────────────────────────────────────────────────────────────
 
 function extractYTThumbnail(data: any): string | null {
@@ -129,6 +171,7 @@ function mapYTVideo(v: any): any {
     views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
     likes: typeof likes === "number" ? likes : parseInt(String(likes || 0), 10) || 0,
     comments: typeof comments === "number" ? comments : parseInt(String(comments || 0), 10) || 0,
+    shares: ytShareCount(v),
     publishedAt: v.publishedTime || v.publishDate || v.publishedAt || v.snippet?.publishedAt || null,
     duration: v.lengthSeconds ?? v.duration ?? 0,
     plat: "youtube",
@@ -276,7 +319,6 @@ function mapIGPost(item: any, _handle: string): any {
   const cap = base?.caption;
   const caption = (typeof cap === "string" ? cap : cap?.text ?? "") || (base?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "").slice(0, 200);
   const commentCount = base?.edge_media_to_comment?.count ?? base?.comment_count ?? 0;
-  const likeCount = base?.edge_liked_by?.count ?? base?.like_count ?? 0;
   const shortcode = base?.code ?? base?.shortcode;
   return {
     id: base?.id ?? base?.pk ?? base?.strong_id__ ?? shortcode,
@@ -284,9 +326,9 @@ function mapIGPost(item: any, _handle: string): any {
     url: shortcode ? `https://www.instagram.com/p/${shortcode}/` : null,
     thumbnail: base?.display_uri ?? base?.display_url ?? base?.thumbnail_src,
     views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
-    likes: typeof likeCount === "number" ? likeCount : parseInt(String(likeCount || 0), 10) || 0,
+    likes: igLikeCount(base),
     comments: typeof commentCount === "number" ? commentCount : parseInt(String(commentCount || 0), 10) || 0,
-    shares: 0,
+    shares: igShareCount(base),
     publishedAt: (base?.taken_at ?? base?.taken_at_timestamp) ? new Date((base.taken_at ?? base.taken_at_timestamp) * 1000).toISOString() : null,
     duration: 0,
     plat: "instagram",
@@ -304,7 +346,7 @@ async function fetchIGPosts(
   const all: any[] = [];
   let maxId: string | null = null;
   let mode: null | "handle" | "uid" | "both" = null;
-  const MAX_PAGES = fullFetch ? 50 : 1;
+  const MAX_PAGES = fullFetch ? 150 : 1;
 
   const is404 = (e: unknown) => /404|not found|HTTP 404/i.test(String(e instanceof Error ? e.message : e));
 

@@ -84,6 +84,50 @@ async function sc(path, params, apiKey) {
   return res.json();
 }
 
+/** Normalize ints from ScrapeCreators / platform JSON (shapes differ per endpoint). */
+function coerceScInt(v) {
+  if (v == null) return 0;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.floor(v));
+  const n = parseInt(String(v).replace(/,/g, "").trim(), 10);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function ytShareCount(v) {
+  return Math.max(
+    coerceScInt(v?.shares),
+    coerceScInt(v?.shareCount),
+    coerceScInt(v?.share_count),
+    coerceScInt(v?.statistics?.shareCount),
+    coerceScInt(v?.statistics?.share_count),
+    coerceScInt(v?.engagement?.shares),
+    coerceScInt(v?.engagement?.shareCount),
+    coerceScInt(v?.social?.shares),
+    coerceScInt(v?.metrics?.shares),
+  );
+}
+
+/** IG hides total likes on some surfaces — read every field ScrapeCreators may send. */
+function igLikeCount(base) {
+  return Math.max(
+    coerceScInt(base?.like_count),
+    coerceScInt(base?.edge_media_preview_like?.count),
+    coerceScInt(base?.edge_liked_by?.count),
+  );
+}
+
+function igShareCount(base) {
+  return Math.max(
+    coerceScInt(base?.share_count),
+    coerceScInt(base?.fb_share_count),
+    coerceScInt(base?.video_share_count),
+    coerceScInt(base?.reshare_count),
+    coerceScInt(base?.republish_count),
+    coerceScInt(base?.edge_media_to_share_count?.count),
+    coerceScInt(base?.media_share_count),
+    coerceScInt(base?.social_share_count),
+  );
+}
+
 // ─── YouTube ───────────────────────────────────────────────────────────────
 
 function extractYTThumbnail(data) {
@@ -162,6 +206,7 @@ function mapYTVideo(v) {
     views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
     likes: typeof likes === "number" ? likes : parseInt(String(likes || 0), 10) || 0,
     comments: typeof comments === "number" ? comments : parseInt(String(comments || 0), 10) || 0,
+    shares: ytShareCount(v),
     publishedAt: v.publishedTime || v.publishDate || v.publishedAt || v.snippet?.publishedAt || null,
     duration: v.lengthSeconds ?? v.duration ?? v.contentDetails?.duration ?? 0,
     plat: "youtube",
@@ -237,6 +282,7 @@ export async function fetchYTVideoDetails(apiKey, videoUrl) {
     views: data.viewCountInt ?? 0,
     likes: data.likeCountInt ?? 0,
     comments: data.commentCountInt ?? 0,
+    shares: ytShareCount(data),
     thumbnail: data.thumbnail,
     publishedAt: data.publishDate,
     duration: Math.round((data.durationMs || 0) / 1000),
@@ -351,7 +397,6 @@ function mapIGPost(item, handle) {
   const cap = base?.caption;
   const caption = (typeof cap === "string" ? cap : cap?.text ?? "") || (base?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "").slice(0, 200);
   const commentCount = base?.edge_media_to_comment?.count ?? base?.comment_count ?? 0;
-  const likeCount = base?.edge_liked_by?.count ?? base?.like_count ?? 0;
   const shortcode = base?.code ?? base?.shortcode;
   return {
     id: base?.id ?? base?.pk ?? base?.strong_id__ ?? shortcode,
@@ -359,9 +404,9 @@ function mapIGPost(item, handle) {
     url: shortcode ? `https://www.instagram.com/p/${shortcode}/` : null,
     thumbnail: base?.display_uri ?? base?.display_url ?? base?.thumbnail_src,
     views: typeof views === "number" ? views : parseInt(String(views || 0), 10) || 0,
-    likes: typeof likeCount === "number" ? likeCount : parseInt(String(likeCount || 0), 10) || 0,
+    likes: igLikeCount(base),
     comments: typeof commentCount === "number" ? commentCount : parseInt(String(commentCount || 0), 10) || 0,
-    shares: 0,
+    shares: igShareCount(base),
     publishedAt: (base?.taken_at ?? base?.taken_at_timestamp) ? new Date((base.taken_at ?? base.taken_at_timestamp) * 1000).toISOString() : null,
     duration: 0,
     plat: "instagram",
@@ -390,7 +435,7 @@ export async function fetchIGPosts(apiKey, handle, opts = {}) {
   let maxId = null;
   /** Which param shape worked for page 0 (must stay consistent for pagination). */
   let mode = /** @type {null | "handle" | "uid" | "both"} */ (null);
-  const MAX_PAGES = fullFetch ? 50 : 1;
+  const MAX_PAGES = fullFetch ? 150 : 1;
 
   const fetchPostsPage = async () => {
     const base = maxId ? { next_max_id: maxId } : {};

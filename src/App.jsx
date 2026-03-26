@@ -118,6 +118,11 @@ const css = `
 .klbl { font-family:var(--mono); font-size:11px; color:var(--text2); letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
 .kval { font-family:var(--display); font-size:64px; letter-spacing:1px; line-height:1; color:var(--text); }
 .ksub { font-family:var(--mono); font-size:10px; color:var(--text2); margin-top:3px; }
+.kcard--rate-split { display:flex; flex-direction:row; align-items:stretch; justify-content:space-between; gap:10px; min-width:0; }
+.kcard--rate-split .kcard-main { flex:1 1 auto; min-width:0; }
+.kplat-mini { flex:0 0 auto; align-self:center; margin:0; padding:0 0 0 10px; border:none; border-left:1px solid var(--border2); display:flex; flex-direction:column; gap:2px; font-family:var(--mono); font-size:8px; line-height:1.15; }
+.kplat-mini-row { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.kplat-mini-val { color:var(--text2); font-variant-numeric:tabular-nums; flex-shrink:0; text-align:right; min-width:3.2em; white-space:nowrap; }
 .kchg { font-family:var(--mono); font-size:9px; margin-top:3px; }
 .up { color:var(--green); } .dn { color:var(--red); }
 .g3 { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:12px; height:340px; flex-shrink:0; }
@@ -363,10 +368,15 @@ const fmtExactCount = (n) => {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 };
 
-/** Sidebar “data as of” line: date + time, no timezone suffix (still uses America/New_York for consistency). */
+/** Sidebar “Last refresh”: Eastern Time (`America/New_York`). No `timeZoneName` with `dateStyle`/`timeStyle` — that combo throws in some engines / SES. */
 function formatLastRefresh(d) {
   if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
+  const s = d.toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  return `${s} ET`;
 }
 
 function usePrefersReducedMotion() {
@@ -1146,7 +1156,14 @@ function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle, fillHeight })
   );
 }
 
-const platEmoji = {youtube:"▶️",tiktok:"🎵"};
+/** Post row / thumb: short platform tag (YT / TT / IG). */
+function platPostLabel(p) {
+  const raw = p?.plat ?? p?._plat ?? "";
+  const x = String(raw).toLowerCase();
+  if (x === "tt" || x === "tiktok") return "TT";
+  if (x === "ig" || x === "instagram") return "IG";
+  return "YT";
+}
 const getFollowers = (c) => (c?.platform?.followers ?? c?.channel?.subscribers ?? 0) || 0;
 
 /**
@@ -1183,7 +1200,23 @@ function preferredChannelTotalViews(entry) {
   return Math.max(fromPosts, snap ?? 0);
 }
 
-const platColors = {youtube:"#ff6b6b",tiktok:"#69c9d0"};
+const platColors = { youtube: "#ff6b6b", tiktok: "#69c9d0", instagram: "#E1306C" };
+/** Same palette as KPI mini labels — for post row platform tags (YT / TT / IG). */
+function platPostColor(p) {
+  const raw = p?.plat ?? p?._plat ?? "";
+  const x = String(raw).toLowerCase();
+  if (x === "tt" || x === "tiktok") return platColors.tiktok;
+  if (x === "ig" || x === "instagram") return platColors.instagram;
+  return platColors.youtube;
+}
+const OVERVIEW_PLAT_ORDER = ["youtube", "tiktok", "instagram"];
+/** Map brand channel key → youtube | tiktok | instagram */
+function overviewPlatformFromHandleKey(h) {
+  const x = (pk(h).platform || "youtube").toLowerCase();
+  if (x === "tiktok") return "tiktok";
+  if (x === "instagram") return "instagram";
+  return "youtube";
+}
 
 const fbGradients = [
   "linear-gradient(135deg,#d63031,#e17055)","linear-gradient(135deg,#6c5ce7,#a29bfe)",
@@ -1293,20 +1326,6 @@ function RollingNumber({ value, spinning, format = "full", magnitude, skipAnimat
         if (c === "," || c === "." || isNaN(d)) return <span key={i}>{c}</span>;
         return <DigitSlot key={i} digit={d} spinning={false} />;
       })}
-    </span>
-  );
-}
-
-/** Two rolling groups + decimal point — matches other KPI slot animation for ratios (e.g. views/follower). */
-function RollingDecimalPair({ value, spinning, skipAnimation }) {
-  const v = Number(value) || 0;
-  const whole = Math.floor(Math.abs(v));
-  const frac = Math.min(99, Math.max(0, Math.floor(Math.abs((v % 1) * 100))));
-  return (
-    <span style={{ display: "inline-flex", alignItems: "baseline", fontVariantNumeric: "tabular-nums" }}>
-      <RollingNumber value={whole} spinning={spinning} magnitude={1e4} format="full" skipAnimation={skipAnimation} />
-      <span style={{ margin: "0 1px", opacity: 0.88, lineHeight: 1 }}>.</span>
-      <RollingNumber value={frac} spinning={spinning} magnitude={100} format="full" skipAnimation={skipAnimation} />
     </span>
   );
 }
@@ -1432,6 +1451,22 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const uniqueKeys = [...new Set((brandsFromDb || []).flatMap(b => b.handles || []))];
   const allChannelsLoaded = uniqueKeys.length === 0 || uniqueKeys.every(k => channelData[k]);
   const dataReady = !brandsLoading && allChannelsLoaded;
+  /** After sync/data load, wait briefly so KPI digits finish rolling before showing YT/TT/IG breakdown. */
+  const [platMiniReady, setPlatMiniReady] = useState(false);
+  useEffect(() => {
+    if (syncing || !dataReady) {
+      setPlatMiniReady(false);
+      return;
+    }
+    if (skipNumberAnim) {
+      setPlatMiniReady(true);
+      return;
+    }
+    const t = setTimeout(() => setPlatMiniReady(true), 480);
+    return () => clearTimeout(t);
+  }, [syncing, dataReady, skipNumberAnim]);
+  /** Hide per-platform mini until ready + not mid-sync; delay aligns with rolling digits. */
+  const showPlatMini = dataReady && !syncing && platMiniReady;
   const showChartsAndBrands = !brandsLoading;
   const keyToBrand = {};
   (brandsFromDb || []).forEach(b => {
@@ -1492,7 +1527,50 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const totalShares = allPosts.reduce((s, p) => s + (p.shares || 0), 0);
   /** Likes per view on catalog posts (one viewer can like + comment; we only count likes vs views). */
   const likeRate = sumPostViews > 0 ? ((totalLikes / sumPostViews) * 100).toFixed(2) : "0";
-  const viewsPerFollower = totalFollowers > 0 ? totalViews / totalFollowers : 0;
+  /** Follow rate as %: (Σ followers ÷ Σ views) × 100 — same basis as subtitle “followers ÷ views”. */
+  const followRatePct = totalViews > 0 ? ((totalFollowers / totalViews) * 100).toFixed(2) : null;
+
+  /** Recomputed every render from latest channelData (no memo) so post-level stats always match after sync. */
+  const overviewPlatBreakdown = (() => {
+    const acc = {
+      youtube: { postViews: 0, likes: 0, followers: 0, prefViews: 0, postCount: 0, cmts: 0, shares: 0 },
+      tiktok: { postViews: 0, likes: 0, followers: 0, prefViews: 0, postCount: 0, cmts: 0, shares: 0 },
+      instagram: { postViews: 0, likes: 0, followers: 0, prefViews: 0, postCount: 0, cmts: 0, shares: 0 },
+    };
+    for (const h of uniqueKeys) {
+      const plat = overviewPlatformFromHandleKey(h);
+      const ch = channelData[h];
+      if (!ch) continue;
+      const a = acc[plat];
+      a.followers += getFollowers(ch);
+      a.prefViews += preferredChannelTotalViews(ch);
+      const posts = ch.posts || [];
+      a.postCount += posts.length;
+      for (const p of posts) {
+        a.postViews += Math.max(0, Number(p.views) || 0);
+        a.likes += p.likes || 0;
+        a.cmts += p.cmts || 0;
+        a.shares += p.shares || 0;
+      }
+    }
+    return OVERVIEW_PLAT_ORDER.map((id) => {
+      const x = acc[id];
+      const avgPost = x.postCount > 0 ? Math.round(x.postViews / x.postCount) : 0;
+      return {
+        id,
+        label: id === "youtube" ? "YT" : id === "tiktok" ? "TT" : "IG",
+        color: platColors[id],
+        prefViews: x.prefViews,
+        followers: x.followers,
+        avgPost,
+        likes: x.likes,
+        cmts: x.cmts,
+        shares: x.shares,
+        likePct: x.postViews > 0 ? (x.likes / x.postViews) * 100 : null,
+        followPct: x.prefViews > 0 ? (x.followers / x.prefViews) * 100 : null,
+      };
+    });
+  })();
 
   let ytViews = 0, ttViews = 0, igViews = 0;
   allChannels.forEach(ch => {
@@ -1534,18 +1612,97 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
       <div className="page" style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flexShrink: 0 }}>
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
-          {[
-            {l:"Total Views",v:totalViews,s:"All platforms (per-channel lifetime)",mag:1e7},
-            {l:"Followers",v:totalFollowers,s:"All accounts",mag:1e4},
-            {l:"Avg Views/Post",v:avgViews,s:`${allPosts.length} posts`,mag:1e6},
-            {l:"Like rate",v:parseFloat(likeRate)||0,s:"Likes ÷ post views",suffix:"%",decimal:true},
-          ].map(k=>(
-            <div key={k.l} className="kcard">
-              <div className="klbl">{k.l}</div>
-              <div className="kval">{k.decimal ? (k.plainDecimal ? (dataReady ? <>{k.v.toFixed(2)}{k.suffix ?? ""}</> : <span style={{ opacity: 0.45 }}>—</span>) : (dataReady ? <>{k.v.toFixed(2)}{k.suffix !== undefined ? k.suffix : "%"}</> : <><RollingNumber value={Math.floor(k.v)} spinning={!skipNumberAnim && !dataReady} magnitude={10} format="short" skipAnimation={skipNumberAnim} />{k.suffix !== undefined ? k.suffix : "%"}</>)) : <><RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={k.mag} format={k.suffix?"short":"full"} skipAnimation={skipNumberAnim} />{k.suffix||""}</>}</div>
-              <div className="ksub">{k.s}</div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Views</div>
+              <div className="kval">
+                <RollingNumber value={totalViews} spinning={!skipNumberAnim && !dataReady} magnitude={1e7} format="full" skipAnimation={skipNumberAnim} />
+              </div>
             </div>
-          ))}
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Total views by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{fmt(row.prefViews)}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Views per post</div>
+              <div className="kval">
+                <RollingNumber value={avgViews} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} format="full" skipAnimation={skipNumberAnim} />
+              </div>
+              <div className="ksub">{`${allPosts.length} posts`}</div>
+            </div>
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Avg views per post by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{fmt(row.avgPost)}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Followers</div>
+              <div className="kval">
+                <RollingNumber value={totalFollowers} spinning={!skipNumberAnim && !dataReady} magnitude={1e4} format="full" skipAnimation={skipNumberAnim} />
+              </div>
+            </div>
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Followers by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{fmt(row.followers)}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Follow rate</div>
+              <div className="kval">
+                {dataReady ? (
+                  followRatePct === null ? (
+                    <span style={{ opacity: 0.55 }}>—</span>
+                  ) : (
+                    <>{parseFloat(followRatePct).toFixed(2)}%</>
+                  )
+                ) : (
+                  <>
+                    <RollingNumber
+                      value={Math.floor(parseFloat(followRatePct) || 0)}
+                      spinning={!skipNumberAnim && !dataReady}
+                      magnitude={10}
+                      format="short"
+                      skipAnimation={skipNumberAnim}
+                    />
+                    %
+                  </>
+                )}
+              </div>
+              <div className="ksub">followers ÷ views</div>
+            </div>
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Follow rate by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{row.followPct != null ? `${row.followPct.toFixed(2)}%` : "—"}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
         </div>
         {syncErrors?.length > 0 && (
           <div className="alert" style={{marginTop:8}}>
@@ -1553,30 +1710,86 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
           </div>
         )}
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)",marginTop:-4}}>
-          {[
-            {l:"Total Likes",v:totalLikes,s:"❤️ All content"},
-            {l:"Comments",v:totalComments,s:"💬 All content"},
-            {l:"Shares",v:totalShares,s:"↗️ All content"},
-            {l:"Views / Follower",v:viewsPerFollower,s:"Σ views ÷ Σ followers",decimal:true,suffix:"",plainDecimal:true},
-          ].map(k=>(
-            <div key={k.l} className="kcard">
-              <div className="klbl">{k.l}</div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Likes</div>
               <div className="kval">
-                {k.decimal ? (
-                  k.plainDecimal ? (
-                    dataReady ? (
-                      <>{k.v.toFixed(2)}</>
-                    ) : (
-                      <RollingDecimalPair value={k.v} spinning={!skipNumberAnim && !dataReady} skipAnimation={skipNumberAnim} />
-                    )
-                  ) : null
+                <RollingNumber value={totalLikes} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} />
+              </div>
+            </div>
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Total likes by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{fmt(row.likes)}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Like rate</div>
+              <div className="kval">
+                {dataReady ? (
+                  <>{parseFloat(likeRate).toFixed(2)}%</>
                 ) : (
-                  <RollingNumber value={k.v} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} />
+                  <>
+                    <RollingNumber value={Math.floor(parseFloat(likeRate) || 0)} spinning={!skipNumberAnim && !dataReady} magnitude={10} format="short" skipAnimation={skipNumberAnim} />
+                    %
+                  </>
                 )}
               </div>
-              <div className="ksub">{k.s}</div>
+              <div className="ksub">Likes ÷ post views</div>
             </div>
-          ))}
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Like rate by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{row.likePct != null ? `${row.likePct.toFixed(2)}%` : "—"}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Comments</div>
+              <div className="kval">
+                <RollingNumber value={totalComments} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} />
+              </div>
+            </div>
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Comments by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{fmt(row.cmts)}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className={showPlatMini ? "kcard kcard--rate-split" : "kcard"}>
+            <div className="kcard-main">
+              <div className="klbl">Shares</div>
+              <div className="kval">
+                <RollingNumber value={totalShares} spinning={!skipNumberAnim && !dataReady} magnitude={1e6} skipAnimation={skipNumberAnim} />
+              </div>
+            </div>
+            {showPlatMini && (
+            <div className="kplat-mini" aria-label="Shares by platform">
+              {overviewPlatBreakdown.map((row) => (
+                <div key={row.id} className="kplat-mini-row">
+                  <span className="kplat-mini-lbl" style={{ color: row.color }}>{row.label}</span>
+                  <span className="kplat-mini-val">{fmt(row.shares)}</span>
+                </div>
+              ))}
+            </div>
+            )}
+          </div>
         </div>
         </div>
 
@@ -1779,7 +1992,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                               </span>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div className="tpr-meta" style={{ fontSize: 8, color: "var(--text3)", lineHeight: 1.15 }}>
-                                  {p._brand} · {p.plat === "tt" ? "🎵" : p.plat === "ig" ? "📷" : "▶️"}
+                                  {p._brand}{showPlatMini ? <> · <span style={{ fontFamily: "var(--mono)", letterSpacing: 0.5, color: platPostColor(p) }}>{platPostLabel(p)}</span></> : null}
                                 </div>
                                 <div className="tpr-cap" style={{ color: "var(--text)" }}>{p.cap}</div>
                               </div>
@@ -1917,7 +2130,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     () => buildWeekdayGrowthChartData(filterViewsDataReliableOnly(viewsData)),
     [viewsData]
   );
-  const brandViewsPerFollowerK = totalFollowers > 0 ? totalViews / totalFollowers : null;
+  const brandFollowRatePct = totalViews > 0 ? ((totalFollowers / totalViews) * 100).toFixed(2) : null;
 
   const prefersReducedMotion = usePrefersReducedMotion();
   const skipNumberAnim = prefersReducedMotion;
@@ -1954,46 +2167,32 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
           <>
             <div className="krow" style={{gridTemplateColumns:"repeat(6,1fr)"}}>
               {[
-                { l: "Followers", v: totalFollowers, s: `${chData.length} channel${chData.length !== 1 ? "s" : ""}`, mag: 1e4 },
-                {
-                  l: "Total Views",
-                  v: totalViews,
-                  s: actualTab === "all" ? "All platforms" : PLAT_TAB_LABEL[actualTab] || actualTab,
-                  mag: 1e7,
-                },
+                { l: "Followers", v: totalFollowers, mag: 1e4 },
+                { l: "Total Views", v: totalViews, mag: 1e7 },
                 { l: "Avg Views/Post", v: avgV, s: `${posts.length} posts`, mag: 1e6 },
-                { l: "Total Likes", v: totalLikes, s: "❤️ All content", mag: 1e6 },
-                { l: "Comments", v: totalComments, s: "💬 All content", mag: 1e6 },
+                { l: "Total Likes", v: totalLikes, mag: 1e6 },
+                { l: "Comments", v: totalComments, mag: 1e6 },
                 {
-                  l: "Views / Follower",
-                  v: brandViewsPerFollowerK ?? 0,
-                  s: "Σ views ÷ Σ followers",
+                  l: "Follow rate",
+                  v: parseFloat(brandFollowRatePct) || 0,
+                  s: "followers ÷ views",
+                  suffix: "%",
                   decimal: true,
-                  suffix: "",
-                  plainDecimal: true,
                 },
               ].map((k) => (
                 <div key={k.l} className="kcard">
                   <div className="klbl">{k.l}</div>
                   <div className="kval">
                     {k.decimal ? (
-                      k.plainDecimal ? (
-                        brandViewsPerFollowerK == null ? (
+                      dataReadyBrand ? (
+                        brandFollowRatePct === null ? (
                           <span style={{ opacity: 0.55 }}>—</span>
-                        ) : dataReadyBrand ? (
-                          <>{brandViewsPerFollowerK.toFixed(2)}</>
                         ) : (
-                          <RollingDecimalPair
-                            value={brandViewsPerFollowerK}
-                            spinning={!skipNumberAnim && !dataReadyBrand}
-                            skipAnimation={skipNumberAnim}
-                          />
+                          <>
+                            {k.v.toFixed(2)}
+                            {k.suffix !== undefined ? k.suffix : "%"}
+                          </>
                         )
-                      ) : dataReadyBrand ? (
-                        <>
-                          {k.v.toFixed(2)}
-                          {k.suffix !== undefined ? k.suffix : "%"}
-                        </>
                       ) : (
                         <>
                           <RollingNumber
@@ -2019,7 +2218,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                       </>
                     )}
                   </div>
-                  <div className="ksub">{k.s}</div>
+                  {k.s ? <div className="ksub">{k.s}</div> : null}
                 </div>
               ))}
             </div>
@@ -2153,7 +2352,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         {p.thumbnail ? (
                           <img src={p.thumbnail} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"center 10%"}}/>
                         ) : (
-                          <span>{p.emoji || "▶️"}</span>
+                          <span style={{ fontFamily: "var(--mono)", fontSize: 14, color: platPostColor(p), letterSpacing: 1 }}>{platPostLabel(p)}</span>
                         )}
                         {(p.views||0)<avgV && <span className="bab">BELOW AVG</span>}
                       </div>
@@ -2403,7 +2602,7 @@ function loadNav() { try { const v = localStorage.getItem(STORAGE_KEY); if (v) {
 function saveNav(page, brandId) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ page, brandId })); } catch {} }
 function loadBrandsLocal() { try { const v = localStorage.getItem(BRANDS_KEY); if (v) return JSON.parse(v); } catch {} return []; }
 
-export default function App() {
+function App() {
   const [nav, setNav] = useState(loadNav);
   const [brands, setBrands] = useState(loadBrandsLocal);
   const [brandsLoading, setBrandsLoading] = useState(isSupabaseConfigured());
@@ -2536,7 +2735,10 @@ export default function App() {
   const syncStartRef = useRef(0);
 
   const refreshLastSync = useCallback(async () => {
-    if (!isSupabaseConfigured()) return;
+    if (!isSupabaseConfigured()) {
+      setLastSync(null);
+      return;
+    }
     const dbTime = await fetchLastSyncTime().catch(() => null);
     setLastSync(dbTime);
   }, []);
@@ -2623,8 +2825,6 @@ export default function App() {
       if (isSupabaseConfigured()) {
         await upsertLastManualSync();
         await refreshLastSync();
-      } else {
-        setLastSync(new Date());
       }
     } finally {
       setSyncing(false);
@@ -2734,9 +2934,9 @@ export default function App() {
           <div className="sidebar-footer">
             <div
               style={{ fontFamily: "DM Mono", fontSize: 8, color: "#333", letterSpacing: 2 }}
-              title="Oldest channel API snapshot still in cache (ScrapeCreators). Newer fetches update rows; this is the weakest freshness on the dashboard."
+              title="Postgres server time only: channel_cache.last_synced_at (set by DB trigger on sync) and cron_config markers. The browser only formats for display (Eastern)."
             >
-              DATA AS OF
+              Last Refresh
               <br />
               <span style={{ color: "var(--text3)", fontSize: 9, letterSpacing: 0 }}>{lastSync ? formatLastRefresh(lastSync) : "Never"}</span>
             </div>
@@ -2791,3 +2991,5 @@ export default function App() {
     </>
   );
 }
+
+export default App;

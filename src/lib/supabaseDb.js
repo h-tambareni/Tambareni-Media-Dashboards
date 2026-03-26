@@ -366,6 +366,7 @@ export async function upsertChannelCache(channelHandle, snapshot) {
   }
   const canonical = canonicalCacheKeyFor(channelHandle, brandRows);
   if (!canonical) return;
+  // last_synced_at is set only by Postgres (trigger tr_channel_cache_last_synced) — not browser time.
   await supabase.from("channel_cache").upsert(
     {
       channel_handle: canonical,
@@ -373,7 +374,6 @@ export async function upsertChannelCache(channelHandle, snapshot) {
       subscribers: snapshot.channel?.subscribers ?? 0,
       video_count: snapshot.channel?.videoCount ?? 0,
       raw_platform_json: snapshot,
-      last_synced_at: new Date().toISOString(),
     },
     { onConflict: "channel_handle" }
   );
@@ -467,43 +467,76 @@ export async function fetchDailySnapshots(channelHandle, platform, days = null) 
   return pickLatestSnapshotsPerDay(data ?? []);
 }
 
-/** Stores when Sync All was last run (shared across devices). */
+/** Records Sync All completion using Postgres time via RPC (not browser clock). */
 export async function upsertLastManualSync() {
   if (!isSupabaseConfigured()) return;
-  const now = new Date().toISOString();
-  await supabase.from("cron_config").upsert({ key: "last_manual_sync", value: now }, { onConflict: "key" });
+  const { error } = await supabase.rpc("touch_last_manual_sync");
+  if (error) console.warn("[upsertLastManualSync]", error.message);
 }
 
 /**
- * When the **stalest** channel snapshot was written — min `last_synced_at` over `channel_cache`
- * for connected accounts (each row is updated when ScrapeCreators APIs return and we upsert).
- * That matches “how old is the oldest API-backed data you might still be seeing” on the dashboard.
- * Ignores `daily_snapshots` / cron markers so the clock only moves when channel API data is stored.
+ * “Last refresh” — latest time **data was written** in Supabase for your accounts.
+ *
+ * Uses the **newest** of:
+ * - `channel_cache.last_synced_at` for every active `brand_channels` row (updated on each successful
+ *   sync / cache upsert — this is the reliable source for the anon client).
+ * - `cron_config` keys `last_manual_sync` and `last_daily_sync_cron` when readable (optional).
  */
 export async function fetchLastSyncTime() {
   if (!isSupabaseConfigured()) return null;
-  let rows;
+
+  const times = [];
+
+  try {
+    const { data: rows, error } = await supabase
+      .from("cron_config")
+      .select("key, value")
+      .in("key", ["last_manual_sync", "last_daily_sync_cron"]);
+    if (error) console.warn("[fetchLastSyncTime] cron_config", error.message);
+    if (!error && rows?.length) {
+      for (const row of rows) {
+        if (row?.value) {
+          const t = new Date(row.value).getTime();
+          if (Number.isFinite(t)) times.push(t);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[fetchLastSyncTime] cron_config", e);
+  }
+
   try {
     const res = await supabase.from("brand_channels").select("channel_handle, platform, active");
-    if (res.error) throw res.error;
-    rows = res.data || [];
-  } catch {
-    return null;
+    if (res.error) {
+      console.warn("[fetchLastSyncTime] brand_channels", res.error.message);
+    } else {
+      const keys = [
+        ...new Set(
+          (res.data || [])
+            .filter((r) => r.active !== false)
+            .map((r) => ck(r.channel_handle, r.platform || "youtube")),
+        ),
+      ];
+      if (keys.length) {
+        const { data: caches, error: cErr } = await supabase
+          .from("channel_cache")
+          .select("last_synced_at")
+          .in("channel_handle", keys);
+        if (cErr) console.warn("[fetchLastSyncTime] channel_cache", cErr.message);
+        if (!cErr && caches?.length) {
+          for (const c of caches) {
+            if (c?.last_synced_at) {
+              const t = new Date(c.last_synced_at).getTime();
+              if (Number.isFinite(t)) times.push(t);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[fetchLastSyncTime] channel_cache", e);
   }
-  const keys = [
-    ...new Set(
-      rows
-        .filter((r) => r.active !== false)
-        .map((r) => ck(r.channel_handle, r.platform || "youtube")),
-    ),
-  ];
-  if (!keys.length) return null;
-  const { data: caches, error: cErr } = await supabase.from("channel_cache").select("last_synced_at").in("channel_handle", keys);
-  if (cErr) return null;
-  const times = (caches || [])
-    .map((c) => c.last_synced_at)
-    .filter(Boolean)
-    .map((s) => new Date(s).getTime());
+
   if (!times.length) return null;
-  return new Date(Math.min(...times));
+  return new Date(Math.max(...times));
 }

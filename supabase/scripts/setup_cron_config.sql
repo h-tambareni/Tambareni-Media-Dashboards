@@ -12,6 +12,9 @@
 --   1. daily_sync_url  – where pg_cron hits (URL + secret)
 --   2. instagram_tokens – your actual tokens (copy from .env VITE_INSTAGRAM_TOKENS)
 --
+-- AUTO (do not insert manually): daily-sync Edge Function upserts last_daily_sync_cron when a run
+-- finishes — used with last_manual_sync for the dashboard “DATA AS OF” time.
+--
 -- =============================================================================
 
 -- 1. DAILY SYNC URL

@@ -272,6 +272,15 @@ Deno.serve(async (req) => {
     const failed = results.filter((r) => !r.ok).length;
     console.log(`[daily-sync] date=${today} synced=${synced} failed=${failed}`);
 
+    const finishedAt = new Date().toISOString();
+    const { error: stampErr } = await supabase.from("cron_config").upsert(
+      { key: "last_daily_sync_cron", value: finishedAt },
+      { onConflict: "key" },
+    );
+    if (stampErr) {
+      console.warn("[daily-sync] could not write last_daily_sync_cron:", stampErr.message);
+    }
+
     return Response.json(
       { ok: true, date: today, synced, failed, skipped_inactive: skippedInactive.length, skipped_inactive_keys: skippedInactive, results },
       { headers: cors },
