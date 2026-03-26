@@ -250,6 +250,13 @@ export async function fetchTTProfile(apiKey, handle) {
   const data = await sc("/v1/tiktok/profile", { handle: handle.replace(/^@/, "") }, apiKey);
   const u = data.user || {};
   const s = data.stats || {};
+  /** Lifetime total views when API exposes it; otherwise 0 and we rely on summing video plays. */
+  const profileViewTotal =
+    s.totalVideoViewCount ??
+    s.videoViewCount ??
+    s.video_view_count ??
+    s.viewCount ??
+    0;
   return {
     id: u.id,
     handle: u.uniqueId || handle,
@@ -257,6 +264,7 @@ export async function fetchTTProfile(apiKey, handle) {
     subscribers: s.followerCount ?? 0,
     hearts: s.heartCount ?? 0,
     videoCount: s.videoCount ?? 0,
+    viewCount: typeof profileViewTotal === "number" ? profileViewTotal : parseInt(String(profileViewTotal || 0), 10) || 0,
     thumbnail: u.avatarMedium || u.avatarLarger || u.avatarThumb || null,
     bio: u.signature,
     verified: u.verified ?? false,

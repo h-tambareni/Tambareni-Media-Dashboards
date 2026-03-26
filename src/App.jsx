@@ -79,9 +79,10 @@ const css = `
 .app ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 .app ::-webkit-scrollbar-thumb:hover { background: #444; }
 .app ::-webkit-scrollbar-thumb:active { background: #555; }
-.sidebar { width: 216px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-.sidebar-footer { margin-top: auto; flex-shrink: 0; padding: 14px 18px; border-top: 1px solid var(--border); }
-.logo-area { padding: 22px 18px 18px; border-bottom: 1px solid var(--border); }
+.sidebar { width: 216px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; position: sticky; top: 0; height: 100vh; max-height: 100vh; overflow: hidden; }
+.sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.sidebar-footer { flex-shrink: 0; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--surface); }
+.logo-area { padding: 22px 18px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .logo-text { font-family: var(--display); font-size: 28px; letter-spacing: 3px; line-height: 1.2; color: var(--text); cursor: default; user-select: none; }
 .nav-sec { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .nav-lbl { font-family: var(--display); font-size: 20px; color: var(--text); letter-spacing: 2px; padding: 0 18px 8px; text-transform: uppercase; cursor: default; user-select: none; }
@@ -275,8 +276,9 @@ const css = `
   .ov-pie-posts-stack .top-posts-list { max-height: none !important; }
   .top-post-row { padding: 4px 6px !important; }
   .sidebar-overlay { display: block; }
-  .sidebar { position: fixed; top: 0; left: 0; z-index: 1000; height: 100vh; max-height: 100vh; height: 100dvh; max-height: 100dvh; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,.5); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-  .sidebar-footer { margin-top: 0 !important; padding-bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
+  .sidebar { position: fixed; top: 0; left: 0; z-index: 1000; height: 100dvh; max-height: 100dvh; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,.5); overflow: hidden; }
+  .sidebar-scroll { -webkit-overflow-scrolling: touch; }
+  .sidebar-footer { padding-bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
   .sidebar.mobile-open { transform: translateX(0); }
   .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
   .sidebar-overlay.visible { opacity: 1; pointer-events: auto; }
@@ -361,7 +363,7 @@ const fmtExactCount = (n) => {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 };
 
-/** Last refresh line: date + time, no timezone suffix (still uses America/New_York for consistency). */
+/** Sidebar “data as of” line: date + time, no timezone suffix (still uses America/New_York for consistency). */
 function formatLastRefresh(d) {
   if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return "";
   return d.toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
@@ -502,12 +504,15 @@ function chartDayKey(r) {
   return r?.activityRaw ?? r?.raw ?? "";
 }
 
-/** YYYY-MM-DD: chart X / activity calendar day for the dotted line (to the right = reliable). Matches `activityRaw` on Daily Growth. VITE_RELIABLE_SNAPSHOTS_SINCE=none hides the line. */
+/**
+ * Vertical line on Daily Growth at this activity day (YYYY-MM-DD): marks where deltas are treated as
+ * fully accurate; earlier points still plot (somewhat accurate). VITE_RELIABLE_SNAPSHOTS_SINCE=none hides the line.
+ */
 const RELIABLE_SNAPSHOTS_SINCE = (() => {
   const v = (import.meta.env.VITE_RELIABLE_SNAPSHOTS_SINCE ?? "").trim();
   if (v.toLowerCase() === "none") return null;
   if (v) return v;
-  return "2026-03-23";
+  return "2026-03-25";
 })();
 
 function reliableSnapshotAxisX(viewsData) {
@@ -516,7 +521,18 @@ function reliableSnapshotAxisX(viewsData) {
   return row ? chartDayKey(row) : RELIABLE_SNAPSHOTS_SINCE;
 }
 
-/** Weekday buckets only use rows on/after the reliable cutoff (same activity day as dotted line). */
+/** Dashed vertical line only when at least one plotted day is on/after the cutoff (avoids duplicate series + grey-only graph). */
+function dailyGrowthReferenceLineX(viewsData) {
+  if (!RELIABLE_SNAPSHOTS_SINCE || !viewsData?.length) return null;
+  const hasOnOrAfter = viewsData.some((r) => {
+    const d = chartDayKey(r);
+    return d && d >= RELIABLE_SNAPSHOTS_SINCE;
+  });
+  if (!hasOnOrAfter) return null;
+  return reliableSnapshotAxisX(viewsData);
+}
+
+/** Day of week bars: only days on/after fully-accurate cutoff (matches dashed line / VITE_RELIABLE_SNAPSHOTS_SINCE). */
 function filterViewsDataReliableOnly(rows) {
   if (!rows?.length) return rows || [];
   if (!RELIABLE_SNAPSHOTS_SINCE) return rows;
@@ -648,17 +664,25 @@ function filterDailyGrowthByRange(rows, rangeId) {
  * Per-point labels: red stays near the red (views) point above, teal near the teal (followers) point below.
  * Overlaps resolved with horizontal nudges first so we don’t shove one series toward the other line.
  */
+function dailyGrowthMergePoints(formattedGraphicalItems, dataKey) {
+  const pts = [];
+  for (const fg of formattedGraphicalItems || []) {
+    if (fg?.item?.props?.dataKey === dataKey && fg.props?.points?.length) pts.push(...fg.props.points);
+  }
+  pts.sort((a, b) => {
+    const ka = a.payload?.activityRaw || "";
+    const kb = b.payload?.activityRaw || "";
+    return ka.localeCompare(kb);
+  });
+  return pts;
+}
+
 function DailyGrowthDualAxisLabels(props) {
   const { formattedGraphicalItems, offset } = props;
   if (!formattedGraphicalItems?.length || !offset?.width) return null;
 
-  let ptsViews = null;
-  let ptsFol = null;
-  for (const fg of formattedGraphicalItems) {
-    const dk = fg?.item?.props?.dataKey;
-    if (dk === "views") ptsViews = fg.props?.points;
-    if (dk === "followerGrowth") ptsFol = fg.props?.points;
-  }
+  const ptsViews = dailyGrowthMergePoints(formattedGraphicalItems, "views");
+  const ptsFol = dailyGrowthMergePoints(formattedGraphicalItems, "followerGrowth");
   if (!ptsViews?.length || !ptsFol?.length || ptsViews.length !== ptsFol.length) return null;
 
   const left = offset.left;
@@ -769,6 +793,7 @@ function DailyGrowthDualAxisLabels(props) {
       h: LABEL_H,
       text: vt,
       fill: "#ff6b6b",
+      halo: "#121210",
       kind: "v",
       i,
       anchorX: vx,
@@ -781,6 +806,7 @@ function DailyGrowthDualAxisLabels(props) {
       h: LABEL_H,
       text: ft,
       fill: "#5ec8d0",
+      halo: "#121210",
       kind: "f",
       i,
       anchorX: fx,
@@ -804,7 +830,7 @@ function DailyGrowthDualAxisLabels(props) {
           fontFamily="DM Mono, monospace"
           fontSize={FONT}
           fontWeight={600}
-          stroke="#121210"
+          stroke={it.halo ?? "#121210"}
           strokeWidth={2.5}
           paintOrder="stroke fill"
           style={{ userSelect: "none" }}
@@ -1122,6 +1148,41 @@ function WeekdayGrowthPanel({ data, height, emptyHint, panelStyle, fillHeight })
 
 const platEmoji = {youtube:"▶️",tiktok:"🎵"};
 const getFollowers = (c) => (c?.platform?.followers ?? c?.channel?.subscribers ?? 0) || 0;
+
+/**
+ * Latest cumulative total_views from daily_snapshots (hydrated as entry.dailyViews). The nightly job
+ * paginates all TikTok/IG videos; channel_cache totalViews is Math.max(ch.viewCount, sum posts) and
+ * TikTok profiles omit viewCount, so partial post lists can undercount by millions vs snapshots.
+ */
+function latestDailySnapshotTotalViews(entry) {
+  const dv = entry?.dailyViews;
+  if (!dv?.length) return null;
+  let best = null;
+  let bestRaw = "";
+  for (const row of dv) {
+    const raw = (row.raw || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) continue;
+    if (raw >= bestRaw) {
+      bestRaw = raw;
+      const v = Number(row.views);
+      if (Number.isFinite(v)) best = v;
+    }
+  }
+  return best;
+}
+
+/** Total views for KPIs: YouTube uses official channel.viewCount; TT/IG use max(post sum, snapshot). */
+function preferredChannelTotalViews(entry) {
+  const fromPosts = entry?.totalViews ?? 0;
+  const snap = latestDailySnapshotTotalViews(entry);
+  const plat = entry?.platform?.platformType || entry?.channel?.platform || "youtube";
+  const ytOfficial = Number(entry?.channel?.viewCount) || 0;
+  if (plat === "youtube") {
+    return Math.max(fromPosts, ytOfficial, snap ?? 0);
+  }
+  return Math.max(fromPosts, snap ?? 0);
+}
+
 const platColors = {youtube:"#ff6b6b",tiktok:"#69c9d0"};
 
 const fbGradients = [
@@ -1276,7 +1337,7 @@ function OverviewBrandCard({ b, channelData, onBrand, dataReady, skipNumberAnim 
   const allHandles = b.handles || [];
   const chData = allHandles.map(h => channelData[h]).filter(Boolean);
   const brandFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
-  const brandViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
+  const brandViews = chData.reduce((s, c) => s + preferredChannelTotalViews(c), 0);
   const brandViewsPerFollower = brandFollowers > 0 ? brandViews / brandFollowers : null;
   const thumbs = getAllBrandThumbs(b, channelData);
   const hasData = chData.length > 0;
@@ -1330,7 +1391,7 @@ function OverviewBrandCard({ b, channelData, onBrand, dataReady, skipNumberAnim 
             const ptHandles = allHandles.filter(h => (h.includes("::") ? h.split("::")[1] : "youtube") === pt);
             const ptChData = ptHandles.map(h => channelData[h]).filter(Boolean);
             const followers = ptChData.reduce((s, c) => s + getFollowers(c), 0);
-            const views = ptChData.reduce((s, c) => s + (c.totalViews || 0), 0);
+            const views = ptChData.reduce((s, c) => s + preferredChannelTotalViews(c), 0);
             const ptBadges = ptHandles.map(key => ({ key, isActive: b.handleStatus?.[key] !== false }));
             return (
               <div key={pt} style={{ ...boxStyle, display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 6px", background: "var(--surface2)", borderRadius: 4, border: "1px solid var(--border)" }}>
@@ -1397,7 +1458,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
     const filtered = filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange);
     return annotateActivityDates(filtered);
   }, [viewsDataFull, dailyGrowthRange]);
-  const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
+  const dgRefLineX = useMemo(() => dailyGrowthReferenceLineX(viewsData), [viewsData]);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dailyGrowthFollowerYMax = useMemo(() => dailyGrowthFollowerAxisDomainMax(viewsData), [viewsData]);
@@ -1409,7 +1470,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const brandsColLeft = brandsList.filter((_, i) => i % 2 === 0);
   const brandsColRight = brandsList.filter((_, i) => i % 2 === 1);
 
-  const totalViews = allChannels.reduce((s, ch) => s + (ch.totalViews || 0), 0);
+  const totalViews = allChannels.reduce((s, ch) => s + preferredChannelTotalViews(ch), 0);
   const totalFollowers = allChannels.reduce((s, ch) => s + getFollowers(ch), 0);
   const allPostsRaw = uniqueKeys.flatMap(h => {
     const ch = channelData[h];
@@ -1423,17 +1484,20 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
     });
     return Array.from(byId.values());
   })();
-  const avgViews = allPosts.length ? Math.round(allPosts.reduce((s, p) => s + p.views, 0) / allPosts.length) : 0;
+  /** Sum of views on posts in the catalog (deduped). Used for avg views/post + like rate. */
+  const sumPostViews = allPosts.reduce((s, p) => s + Math.max(0, Number(p.views) || 0), 0);
+  const avgViews = allPosts.length ? Math.round(sumPostViews / allPosts.length) : 0;
   const totalLikes = allPosts.reduce((s, p) => s + (p.likes || 0), 0);
   const totalComments = allPosts.reduce((s, p) => s + (p.cmts || 0), 0);
   const totalShares = allPosts.reduce((s, p) => s + (p.shares || 0), 0);
-  const engagementRate = totalViews > 0 ? ((totalLikes + totalComments + totalShares) / totalViews * 100).toFixed(2) : "0";
+  /** Likes per view on catalog posts (one viewer can like + comment; we only count likes vs views). */
+  const likeRate = sumPostViews > 0 ? ((totalLikes / sumPostViews) * 100).toFixed(2) : "0";
   const viewsPerFollower = totalFollowers > 0 ? totalViews / totalFollowers : 0;
 
   let ytViews = 0, ttViews = 0, igViews = 0;
   allChannels.forEach(ch => {
     const pt = ch.platform?.platformType || ch.channel?.platform || "youtube";
-    const v = ch.totalViews || 0;
+    const v = preferredChannelTotalViews(ch);
     if (pt === "tiktok") ttViews += v;
     else if (pt === "instagram") igViews += v;
     else ytViews += v;
@@ -1471,10 +1535,10 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
         <div style={{ flexShrink: 0 }}>
         <div className="krow" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
           {[
-            {l:"Total Views",v:totalViews,s:"All platforms",mag:1e7},
+            {l:"Total Views",v:totalViews,s:"All platforms (per-channel lifetime)",mag:1e7},
             {l:"Followers",v:totalFollowers,s:"All accounts",mag:1e4},
             {l:"Avg Views/Post",v:avgViews,s:`${allPosts.length} posts`,mag:1e6},
-            {l:"Engagement Rate",v:parseFloat(engagementRate)||0,s:"(Likes+cmts+shares)/views",suffix:"%",decimal:true},
+            {l:"Like rate",v:parseFloat(likeRate)||0,s:"Likes ÷ post views",suffix:"%",decimal:true},
           ].map(k=>(
             <div key={k.l} className="kcard">
               <div className="klbl">{k.l}</div>
@@ -1564,8 +1628,8 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                       <XAxis
                         dataKey="activityRaw"
                         ticks={dailyGrowthXTicks}
-                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
                         tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
+                        tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                         axisLine={false}
                         tickLine={false}
                         height={18}
@@ -1591,10 +1655,10 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         width={36}
                       />
                       <Tooltip content={TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
-                      {reliableSnapshotLineX && (
+                      {dgRefLineX && (
                         <ReferenceLine
                           yAxisId="left"
-                          x={reliableSnapshotLineX}
+                          x={dgRefLineX}
                           stroke="rgba(245,242,237,0.45)"
                           strokeWidth={1}
                           strokeDasharray="4 4"
@@ -1802,7 +1866,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
   const chData = actualTab === "all" ? allChData : allChData.filter(c => getPlat(c) === actualTab);
 
   const totalFollowers = chData.reduce((s, c) => s + getFollowers(c), 0);
-  const totalViews = chData.reduce((s, c) => s + (c.totalViews || 0), 0);
+  const totalViews = chData.reduce((s, c) => s + preferredChannelTotalViews(c), 0);
   const postsRaw = chData.flatMap(c => (c.posts || []).map(p => ({ ...p, _plat: getPlat(c) })));
   const posts = (() => {
     const byId = new Map();
@@ -1845,7 +1909,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     const filtered = filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange);
     return annotateActivityDates(filtered);
   }, [viewsDataFull, dailyGrowthRange]);
-  const reliableSnapshotLineX = reliableSnapshotAxisX(viewsData);
+  const dgRefLineX = useMemo(() => dailyGrowthReferenceLineX(viewsData), [viewsData]);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dailyGrowthFollowerYMax = useMemo(() => dailyGrowthFollowerAxisDomainMax(viewsData), [viewsData]);
@@ -1985,7 +2049,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                 {viewsData.length > 0 ? (
                   <div style={{ flex: 1, minHeight: 0 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={viewsData} margin={{ top: 30, right: 44, bottom: 30, left: 2 }}>
+                      <ComposedChart data={viewsData} margin={{ top: 18, right: 44, bottom: 6, left: 2 }}>
                         <defs>
                           <linearGradient id="gv-brand" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
@@ -1995,11 +2059,12 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         <XAxis
                           dataKey="activityRaw"
                           ticks={dailyGrowthXTicks}
-                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#444" }}
                           tickFormatter={(v) => formatDailyGrowthXTick(v, viewsData)}
+                          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                           axisLine={false}
                           tickLine={false}
-                          height={26}
+                          height={18}
+                          interval="preserveStartEnd"
                         />
                         <YAxis
                           yAxisId="left"
@@ -2021,10 +2086,10 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           width={36}
                         />
                         <Tooltip content={TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
-                        {reliableSnapshotLineX && (
+                        {dgRefLineX && (
                           <ReferenceLine
                             yAxisId="left"
-                            x={reliableSnapshotLineX}
+                            x={dgRefLineX}
                             stroke="rgba(245,242,237,0.45)"
                             strokeWidth={1}
                             strokeDasharray="4 4"
@@ -2630,45 +2695,50 @@ export default function App() {
       <style>{FONTS}{css}</style>
       <div className="app">
         <div className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
-          <div className="logo-area">
-            <img src="/tm-logo-icon.jpg" alt="Tambareni Media" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
-            <div className="logo-text">TAMBARENI<br/>MEDIA<br/>ANALYTICS</div>
-          </div>
-          <div className="nav-sec">
-            <div className={`nav-item${page==="overview"?" act":""}`} onClick={() => go("overview")}>
-              <div className="nav-dot" style={{background:"#d63031"}}/>Social Media
+          <div className="sidebar-scroll">
+            <div className="logo-area">
+              <img src="/tm-logo-icon.jpg" alt="Tambareni Media" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
+              <div className="logo-text">TAMBARENI<br/>MEDIA<br/>ANALYTICS</div>
             </div>
-            <div className={`nav-item${page==="matchmax"?" act":""}`} onClick={() => go("matchmax")}>
-              <div className="nav-dot" style={{background:"#d63031"}}/>MatchMax App
+            <div className="nav-sec">
+              <div className={`nav-item${page==="overview"?" act":""}`} onClick={() => go("overview")}>
+                <div className="nav-dot" style={{background:"#d63031"}}/>Social Media
+              </div>
+              <div className={`nav-item${page==="matchmax"?" act":""}`} onClick={() => go("matchmax")}>
+                <div className="nav-dot" style={{background:"#d63031"}}/>MatchMax App
+              </div>
             </div>
-          </div>
-          <div className="nav-sec">
-            <div className="nav-lbl">Brands</div>
-            {[...brands]
-              .sort((a, b) => {
-                const aAllInactive = a.handles?.length > 0 && a.handles.every(h => a.handleStatus?.[h] === false);
-                const bAllInactive = b.handles?.length > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
-                if (aAllInactive === bAllInactive) return 0;
-                return aAllInactive ? 1 : -1;
-              })
-              .map(b => {
-                const thumbs = getAllBrandThumbs(b, channelData);
-                const activeCount = b.handles?.filter(h => b.handleStatus?.[h] !== false).length ?? 0;
-                const allInactive = (b.handles?.length ?? 0) > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
-                return (
-                  <div key={b.id} className={`brand-item${page==="brand"&&brandId===b.id?" act":""}${allInactive?" strike":""}`} onClick={() => go("brand", b.id)} style={allInactive ? {opacity:0.65} : undefined}>
-                    <Pfp srcs={thumbs} size={22} name={b.name}/>
-                    <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...(allInactive?{textDecoration:"line-through"}:{})}} title={b.name}>{b.name}</span>
-                    {activeCount > 0 && <span className="dbadge">{activeCount}</span>}
-                  </div>
-                );
-              })}
+            <div className="nav-sec">
+              <div className="nav-lbl">Brands</div>
+              {[...brands]
+                .sort((a, b) => {
+                  const aAllInactive = a.handles?.length > 0 && a.handles.every(h => a.handleStatus?.[h] === false);
+                  const bAllInactive = b.handles?.length > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
+                  if (aAllInactive === bAllInactive) return 0;
+                  return aAllInactive ? 1 : -1;
+                })
+                .map(b => {
+                  const thumbs = getAllBrandThumbs(b, channelData);
+                  const activeCount = b.handles?.filter(h => b.handleStatus?.[h] !== false).length ?? 0;
+                  const allInactive = (b.handles?.length ?? 0) > 0 && b.handles.every(h => b.handleStatus?.[h] === false);
+                  return (
+                    <div key={b.id} className={`brand-item${page==="brand"&&brandId===b.id?" act":""}${allInactive?" strike":""}`} onClick={() => go("brand", b.id)} style={allInactive ? {opacity:0.65} : undefined}>
+                      <Pfp srcs={thumbs} size={22} name={b.name}/>
+                      <span style={{flex:1,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...(allInactive?{textDecoration:"line-through"}:{})}} title={b.name}>{b.name}</span>
+                      {activeCount > 0 && <span className="dbadge">{activeCount}</span>}
+                    </div>
+                  );
+                })}
+            </div>
           </div>
           <div className="sidebar-footer">
-            <div style={{fontFamily:"DM Mono",fontSize:8,color:"#333",letterSpacing:2}}>
-              LAST REFRESH
+            <div
+              style={{ fontFamily: "DM Mono", fontSize: 8, color: "#333", letterSpacing: 2 }}
+              title="Oldest channel API snapshot still in cache (ScrapeCreators). Newer fetches update rows; this is the weakest freshness on the dashboard."
+            >
+              DATA AS OF
               <br />
-              <span style={{ color: "#555", fontSize: 9, letterSpacing: 0 }}>{lastSync ? formatLastRefresh(lastSync) : "Never"}</span>
+              <span style={{ color: "var(--text3)", fontSize: 9, letterSpacing: 0 }}>{lastSync ? formatLastRefresh(lastSync) : "Never"}</span>
             </div>
           </div>
         </div>
