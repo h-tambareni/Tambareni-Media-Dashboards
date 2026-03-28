@@ -687,6 +687,66 @@ function dailyGrowthMergePoints(formattedGraphicalItems, dataKey) {
   return pts;
 }
 
+/** Draws grey lines, dots, and area fill over pre-cutoff (before RELIABLE_SNAPSHOTS_SINCE) chart segments. */
+function DailyGrowthGreyOverlay(props) {
+  const { formattedGraphicalItems, offset } = props;
+  if (!RELIABLE_SNAPSHOTS_SINCE || !formattedGraphicalItems?.length) return null;
+
+  const dayOf = (p) => p?.payload?.activityRaw || p?.payload?.raw || "";
+  const isPreCutoff = (p) => { const d = dayOf(p); return d && d < RELIABLE_SNAPSHOTS_SINCE; };
+  const isAtCutoff = (p) => { const d = dayOf(p); return d && d === RELIABLE_SNAPSHOTS_SINCE; };
+
+  const allViewsPts = dailyGrowthMergePoints(formattedGraphicalItems, "views");
+  const allFolPts = dailyGrowthMergePoints(formattedGraphicalItems, "followerGrowth");
+
+  // Line segments: include cutoff point as endpoint so grey line meets the dashed line exactly
+  const viewsLinePts = allViewsPts.filter(p => isPreCutoff(p) || isAtCutoff(p)).filter(p => p?.x != null && p?.y != null);
+  const folLinePts = allFolPts.filter(p => isPreCutoff(p) || isAtCutoff(p)).filter(p => p?.x != null && p?.y != null);
+
+  // Dots: only pre-cutoff (cutoff point itself stays the colored dot from the underlying series)
+  const viewsDotPts = allViewsPts.filter(p => isPreCutoff(p) && p?.x != null && p?.y != null);
+  const folDotPts = allFolPts.filter(p => isPreCutoff(p) && p?.x != null && p?.y != null);
+
+  if (!viewsLinePts.length && !folLinePts.length) return null;
+
+  // Find the Area series baseLine for the grey fill polygon
+  let baseLine = offset != null ? offset.top + (offset.height ?? 0) : null;
+  for (const fg of formattedGraphicalItems) {
+    if (fg?.item?.props?.dataKey === "views" && fg?.props?.baseLine != null) {
+      baseLine = fg.props.baseLine;
+      break;
+    }
+  }
+
+  const GREY = "#666";
+  const GREY_FILL = "rgba(110,110,110,0.12)";
+
+  // Grey area fill polygon
+  const areaPath = viewsLinePts.length >= 2 && baseLine != null
+    ? [
+        `M ${viewsLinePts[0].x},${viewsLinePts[0].y}`,
+        ...viewsLinePts.slice(1).map(p => `L ${p.x},${p.y}`),
+        `L ${viewsLinePts[viewsLinePts.length - 1].x},${baseLine}`,
+        `L ${viewsLinePts[0].x},${baseLine}`,
+        "Z",
+      ].join(" ")
+    : null;
+
+  return (
+    <g pointerEvents="none" aria-hidden>
+      {areaPath && <path d={areaPath} fill={GREY_FILL} stroke="none" />}
+      {viewsLinePts.length > 1 && (
+        <polyline points={viewsLinePts.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={GREY} strokeWidth={2} />
+      )}
+      {viewsDotPts.map((p, i) => <circle key={`gv-${i}`} cx={p.x} cy={p.y} r={3} fill={GREY} />)}
+      {folLinePts.length > 1 && (
+        <polyline points={folLinePts.map(p => `${p.x},${p.y}`).join(" ")} fill="none" stroke={GREY} strokeWidth={2} />
+      )}
+      {folDotPts.map((p, i) => <circle key={`gf-${i}`} cx={p.x} cy={p.y} r={2} fill={GREY} />)}
+    </g>
+  );
+}
+
 function DailyGrowthDualAxisLabels(props) {
   const { formattedGraphicalItems, offset } = props;
   if (!formattedGraphicalItems?.length || !offset?.width) return null;
@@ -796,13 +856,16 @@ function DailyGrowthDualAxisLabels(props) {
     const vCy = vy - GAP_V;
     const fCy = fy + GAP_V;
 
+    const dayKey = vp.payload?.activityRaw || vp.payload?.raw || "";
+    const isPre = RELIABLE_SNAPSHOTS_SINCE ? dayKey < RELIABLE_SNAPSHOTS_SINCE : false;
+
     items.push({
       x: vx,
       y: vCy,
       w: vw,
       h: LABEL_H,
       text: vt,
-      fill: "#ff6b6b",
+      fill: isPre ? "#666" : "#ff6b6b",
       halo: "#121210",
       kind: "v",
       i,
@@ -815,7 +878,7 @@ function DailyGrowthDualAxisLabels(props) {
       w: fw,
       h: LABEL_H,
       text: ft,
-      fill: "#5ec8d0",
+      fill: isPre ? "#666" : "#5ec8d0",
       halo: "#121210",
       kind: "f",
       i,
@@ -1188,16 +1251,25 @@ function latestDailySnapshotTotalViews(entry) {
   return best;
 }
 
-/** Total views for KPIs: YouTube uses official channel.viewCount; TT/IG use max(post sum, snapshot). */
+/**
+ * Total views for KPIs.
+ * YouTube: official channel.viewCount is authoritative — use it, bump by snapshot if higher.
+ * TT/IG: nightly snapshot is from a full-catalog pagination and is stable across page loads.
+ *   Prefer it over the live post-sum (which varies depending on how many videos were fetched).
+ *   Fall back to post-sum only when no snapshot exists yet.
+ */
 function preferredChannelTotalViews(entry) {
   const fromPosts = entry?.totalViews ?? 0;
   const snap = latestDailySnapshotTotalViews(entry);
   const plat = entry?.platform?.platformType || entry?.channel?.platform || "youtube";
   const ytOfficial = Number(entry?.channel?.viewCount) || 0;
   if (plat === "youtube") {
-    return Math.max(fromPosts, ytOfficial, snap ?? 0);
+    return Math.max(ytOfficial || fromPosts, snap ?? 0);
   }
-  return Math.max(fromPosts, snap ?? 0);
+  // TT/IG: take the HIGHER of snapshot vs post-sum.
+  // Snapshot (nightly cron) only fetches 30 pages → undercount for large catalogs.
+  // Post-sum (batch sync, 150 pages) is more complete but not a historical anchor.
+  return Math.max(snap ?? 0, fromPosts);
 }
 
 const platColors = { youtube: "#ff6b6b", tiktok: "#69c9d0", instagram: "#E1306C" };
@@ -1527,8 +1599,8 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   const totalShares = allPosts.reduce((s, p) => s + (p.shares || 0), 0);
   /** Likes per view on catalog posts (one viewer can like + comment; we only count likes vs views). */
   const likeRate = sumPostViews > 0 ? ((totalLikes / sumPostViews) * 100).toFixed(2) : "0";
-  /** Follow rate as %: (Σ followers ÷ Σ views) × 100 — same basis as subtitle “followers ÷ views”. */
-  const followRatePct = totalViews > 0 ? ((totalFollowers / totalViews) * 100).toFixed(2) : null;
+  /** Follow rate as %: (Σ followers ÷ Σ likes) × 100. */
+  const followRatePct = totalLikes > 0 ? ((totalFollowers / totalLikes) * 100).toFixed(2) : null;
 
   /** Recomputed every render from latest channelData (no memo) so post-level stats always match after sync. */
   const overviewPlatBreakdown = (() => {
@@ -1567,7 +1639,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
         cmts: x.cmts,
         shares: x.shares,
         likePct: x.postViews > 0 ? (x.likes / x.postViews) * 100 : null,
-        followPct: x.prefViews > 0 ? (x.followers / x.prefViews) * 100 : null,
+        followPct: x.likes > 0 ? (x.followers / x.likes) * 100 : null,
       };
     });
   })();
@@ -1690,7 +1762,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                   </>
                 )}
               </div>
-              <div className="ksub">followers ÷ views</div>
+              <div className="ksub">followers ÷ likes</div>
             </div>
             {showPlatMini && (
             <div className="kplat-mini" aria-label="Follow rate by platform">
@@ -1900,6 +1972,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                         isAnimationActive={false}
                       />
+                      <Customized component={DailyGrowthGreyOverlay} />
                       <Customized component={DailyGrowthDualAxisLabels} />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -2130,7 +2203,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     () => buildWeekdayGrowthChartData(filterViewsDataReliableOnly(viewsData)),
     [viewsData]
   );
-  const brandFollowRatePct = totalViews > 0 ? ((totalFollowers / totalViews) * 100).toFixed(2) : null;
+  const brandFollowRatePct = totalLikes > 0 ? ((totalFollowers / totalLikes) * 100).toFixed(2) : null;
 
   const prefersReducedMotion = usePrefersReducedMotion();
   const skipNumberAnim = prefersReducedMotion;
@@ -2175,7 +2248,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                 {
                   l: "Follow rate",
                   v: parseFloat(brandFollowRatePct) || 0,
-                  s: "followers ÷ views",
+                  s: "followers ÷ likes",
                   suffix: "%",
                   decimal: true,
                 },
@@ -2317,6 +2390,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                           isAnimationActive={false}
                         />
+                        <Customized component={DailyGrowthGreyOverlay} />
                         <Customized component={DailyGrowthDualAxisLabels} />
                       </ComposedChart>
                     </ResponsiveContainer>
@@ -2626,13 +2700,15 @@ function App() {
   };
 
   useEffect(() => {
-    const loadAndRefetch = async (brandsData, meta = {}) => {
+    const loadAndRefetch = (brandsData, meta = {}) => {
       setBrands(brandsData);
       setChannelMeta(meta);
       const keys = [...new Set(brandsData.flatMap(b => b.handles || []))];
       const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
       const concurrency = isMobile ? 6 : 12;
-      await runWithConcurrency(keys, concurrency, (key) => {
+      // Fire-and-forget: stale cache paints immediately; API refetches update in background.
+      // Do NOT await — brandsLoading clears as soon as brands list + cache reads are done.
+      runWithConcurrency(keys, concurrency, (key) => {
         const { handle, platform } = pk(key);
         return fetchChannel(handle, platform, false, false).catch(() => null);
       });
@@ -2645,12 +2721,13 @@ function App() {
           } catch (e) {
             console.warn("pruneOrphanChannelCaches:", e);
           }
-          await loadAndRefetch(res.brands ?? [], res.channelMeta ?? {});
+          loadAndRefetch(res.brands ?? [], res.channelMeta ?? {});
         })
-        .catch(err => { console.error("Supabase brands load failed:", err); return loadAndRefetch(loadBrandsLocal()); })
+        .catch(err => { console.error("Supabase brands load failed:", err); loadAndRefetch(loadBrandsLocal()); })
         .finally(() => setBrandsLoading(false));
     } else {
-      loadAndRefetch(loadBrandsLocal()).finally(() => setBrandsLoading(false));
+      loadAndRefetch(loadBrandsLocal());
+      setBrandsLoading(false);
     }
   }, [fetchChannel]);
 
