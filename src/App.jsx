@@ -1566,6 +1566,13 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
     return annotateActivityDates(filtered);
   }, [viewsDataFull, dailyGrowthRange]);
   const dgRefLineX = useMemo(() => dailyGrowthReferenceLineX(viewsData), [viewsData]);
+  /** 0–1 fraction along x-axis where the reliable-snapshots cutoff falls (for stroke gradient). */
+  const dgCutoffPct = useMemo(() => {
+    if (!RELIABLE_SNAPSHOTS_SINCE || viewsData.length < 2) return 1;
+    const idx = viewsData.findIndex(r => chartDayKey(r) >= RELIABLE_SNAPSHOTS_SINCE);
+    if (idx < 0) return 1;
+    return idx / (viewsData.length - 1);
+  }, [viewsData]);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dailyGrowthFollowerYMax = useMemo(() => dailyGrowthFollowerAxisDomainMax(viewsData), [viewsData]);
@@ -1909,6 +1916,18 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                           <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
                           <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0} />
                         </linearGradient>
+                        <linearGradient id="gv-stroke" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={0} />
+                          <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={1} />
+                        </linearGradient>
+                        <linearGradient id="gv-fill" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={0} />
+                          <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={0.18} />
+                        </linearGradient>
+                        <linearGradient id="gfol-stroke" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset={`${dgCutoffPct * 100}%`} stopColor="#5ec8d0" stopOpacity={0} />
+                          <stop offset={`${dgCutoffPct * 100}%`} stopColor="#5ec8d0" stopOpacity={1} />
+                        </linearGradient>
                       </defs>
                       <XAxis
                         dataKey="activityRaw"
@@ -1953,11 +1972,11 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         yAxisId="left"
                         type="monotone"
                         dataKey="views"
-                        stroke="#ff6b6b"
+                        stroke="url(#gv-stroke)"
                         strokeWidth={2}
-                        fill="url(#gv)"
+                        fill="url(#gv-fill)"
                         name="Views (day)"
-                        dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
+                        dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; }}
                         activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                         isAnimationActive={false}
                       />
@@ -1965,10 +1984,10 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         yAxisId="right"
                         type="monotone"
                         dataKey="followerGrowth"
-                        stroke="#5ec8d0"
+                        stroke="url(#gfol-stroke)"
                         strokeWidth={2}
                         name="Followers (net/day)"
-                        dot={{ r: 2, fill: "#5ec8d0", strokeWidth: 0 }}
+                        dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; }}
                         activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                         isAnimationActive={false}
                       />
@@ -2196,6 +2215,13 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     return annotateActivityDates(filtered);
   }, [viewsDataFull, dailyGrowthRange]);
   const dgRefLineX = useMemo(() => dailyGrowthReferenceLineX(viewsData), [viewsData]);
+  /** 0–1 fraction along x-axis where the reliable-snapshots cutoff falls (for stroke gradient). */
+  const dgCutoffPct = useMemo(() => {
+    if (!RELIABLE_SNAPSHOTS_SINCE || viewsData.length < 2) return 1;
+    const idx = viewsData.findIndex(r => chartDayKey(r) >= RELIABLE_SNAPSHOTS_SINCE);
+    if (idx < 0) return 1;
+    return idx / (viewsData.length - 1);
+  }, [viewsData]);
   const dailyGrowthXTicks = useMemo(() => dailyGrowthXAxisTicks(viewsData), [viewsData]);
   const dailyGrowthYMax = useMemo(() => dailyGrowthYAxisDomainMax(viewsData), [viewsData]);
   const dailyGrowthFollowerYMax = useMemo(() => dailyGrowthFollowerAxisDomainMax(viewsData), [viewsData]);
@@ -2327,6 +2353,18 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                             <stop offset="5%" stopColor="#ff6b6b" stopOpacity={0.25} />
                             <stop offset="95%" stopColor="#ff6b6b" stopOpacity={0} />
                           </linearGradient>
+                          <linearGradient id="gv-brand-stroke" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={0} />
+                            <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={1} />
+                          </linearGradient>
+                          <linearGradient id="gv-brand-fill" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={0} />
+                            <stop offset={`${dgCutoffPct * 100}%`} stopColor="#ff6b6b" stopOpacity={0.18} />
+                          </linearGradient>
+                          <linearGradient id="gfol-brand-stroke" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset={`${dgCutoffPct * 100}%`} stopColor="#5ec8d0" stopOpacity={0} />
+                            <stop offset={`${dgCutoffPct * 100}%`} stopColor="#5ec8d0" stopOpacity={1} />
+                          </linearGradient>
                         </defs>
                         <XAxis
                           dataKey="activityRaw"
@@ -2371,11 +2409,11 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           yAxisId="left"
                           type="monotone"
                           dataKey="views"
-                          stroke="#ff6b6b"
+                          stroke="url(#gv-brand-stroke)"
                           strokeWidth={2}
-                          fill="url(#gv-brand)"
+                          fill="url(#gv-brand-fill)"
                           name="Views (day)"
-                          dot={{ r: 3, fill: "#ff6b6b", strokeWidth: 0 }}
+                          dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; }}
                           activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                           isAnimationActive={false}
                         />
@@ -2383,10 +2421,10 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           yAxisId="right"
                           type="monotone"
                           dataKey="followerGrowth"
-                          stroke="#5ec8d0"
+                          stroke="url(#gfol-brand-stroke)"
                           strokeWidth={2}
                           name="Followers (net/day)"
-                          dot={{ r: 2, fill: "#5ec8d0", strokeWidth: 0 }}
+                          dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; }}
                           activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                           isAnimationActive={false}
                         />
