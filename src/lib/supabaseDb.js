@@ -335,7 +335,7 @@ export function canonicalCacheKeyFor(channelHandle, brandRows) {
   return null;
 }
 
-async function fetchBrandChannelsRows() {
+export async function fetchBrandChannelsRows() {
   const { data, error } = await supabase.from("brand_channels").select("channel_handle, platform");
   if (error) throw error;
   return data || [];
@@ -356,18 +356,25 @@ export async function deleteChannelCache(channelHandle) {
   }
 }
 
-export async function upsertChannelCache(channelHandle, snapshot) {
+/** Single-channel cache write. Fetches brand rows itself — use upsertChannelCacheBatch for multiple channels. */
+export async function upsertChannelCache(channelHandle, snapshot, { brandRows: preloadedRows } = {}) {
   if (!isSupabaseConfigured()) return;
-  let brandRows;
-  try {
-    brandRows = await fetchBrandChannelsRows();
-  } catch {
-    return;
+  let brandRows = preloadedRows;
+  if (!brandRows) {
+    try {
+      brandRows = await fetchBrandChannelsRows();
+    } catch (e) {
+      console.error("[upsertChannelCache] fetchBrandChannelsRows failed:", e?.message || e);
+      return;
+    }
   }
   const canonical = canonicalCacheKeyFor(channelHandle, brandRows);
-  if (!canonical) return;
+  if (!canonical) {
+    console.warn("[upsertChannelCache] no canonical key for", channelHandle, "— skipped (not in brand_channels?)");
+    return;
+  }
   // last_synced_at is set only by Postgres (trigger tr_channel_cache_last_synced) — not browser time.
-  await supabase.from("channel_cache").upsert(
+  const { error } = await supabase.from("channel_cache").upsert(
     {
       channel_handle: canonical,
       youtube_channel_id: snapshot.channel?.id || null,
@@ -376,6 +383,46 @@ export async function upsertChannelCache(channelHandle, snapshot) {
       raw_platform_json: snapshot,
     },
     { onConflict: "channel_handle" }
+  );
+  if (error) console.error("[upsertChannelCache] upsert failed for", canonical, ":", error.message, error.details ?? "");
+}
+
+/**
+ * Batch cache write — fetches brand rows ONCE then upserts all entries in parallel.
+ * Use this during Sync All to avoid N×fetchBrandChannelsRows queries.
+ */
+export async function upsertChannelCacheBatch(entries, { onNotify } = {}) {
+  if (!isSupabaseConfigured() || !entries?.length) return;
+  let brandRows;
+  try {
+    brandRows = await fetchBrandChannelsRows();
+  } catch (e) {
+    console.error("[upsertChannelCacheBatch] fetchBrandChannelsRows failed:", e?.message || e);
+    return;
+  }
+  await Promise.all(
+    entries.map(async ({ key, entry }) => {
+      const canonical = canonicalCacheKeyFor(key, brandRows);
+      if (!canonical) {
+        console.warn("[upsertChannelCacheBatch] no canonical key for", key, "— skipped");
+        return;
+      }
+      const { error } = await supabase.from("channel_cache").upsert(
+        {
+          channel_handle: canonical,
+          youtube_channel_id: entry.channel?.id || null,
+          subscribers: entry.channel?.subscribers ?? 0,
+          video_count: entry.channel?.videoCount ?? 0,
+          raw_platform_json: entry,
+        },
+        { onConflict: "channel_handle" }
+      );
+      if (error) {
+        console.error("[upsertChannelCacheBatch] failed for", canonical, ":", error.message, error.details ?? "");
+      } else {
+        onNotify?.();
+      }
+    })
   );
 }
 

@@ -5,12 +5,12 @@
  *
  * channelData keys use composite format: "handle::platform"
  */
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useRef } from "react";
 import { fetchYTChannel, fetchYTChannelVideos, fetchTTProfile, fetchTTProfileVideos, fetchIGProfile, fetchIGPosts } from "../lib/scrapeCreators";
 import { isSupabaseConfigured } from "../lib/supabase";
 import {
   getCachedChannelWithFallback, isCacheFresh, parseCachedSnapshot,
-  upsertChannelCache, deleteChannelCache, fetchDailySnapshots,
+  upsertChannelCache, upsertChannelCacheBatch, deleteChannelCache, fetchDailySnapshots,
   updateBrandChannelYoutubeId, ck, pk,
 } from "../lib/supabaseDb";
 
@@ -29,6 +29,8 @@ export function YouTubeProvider({ children }) {
   const apiKey = import.meta.env.VITE_SCRAPECREATORS_API_KEY || "";
   const [channels, setChannels] = useState({});
   const [connectedHandles, setConnectedHandles] = useState([]);
+  /** Set to true during Sync All to block background fetchChannel calls from overwriting fresh batch data. */
+  const isBatchSyncingRef = useRef(false);
 
   const removeChannel = useCallback((compositeKey) => {
     setChannels((prev) => {
@@ -59,7 +61,8 @@ export function YouTubeProvider({ children }) {
             cached = await getCachedChannelWithFallback(handle, plat);
             cachedSnap = cached ? parseCachedSnapshot(cached) : null;
             if (!forceRefresh && cachedSnap) {
-              setChannels((prev) => ({ ...prev, [compositeKey]: cachedSnap }));
+              // Don't paint stale cache on top of fresh batch-sync data
+              if (!isBatchSyncingRef.current) setChannels((prev) => ({ ...prev, [compositeKey]: cachedSnap }));
               setConnectedHandles((prev) => (prev.includes(compositeKey) ? prev : [...prev, compositeKey]));
               const postsEarly = cachedSnap?.posts || [];
               const declaredEarly =
@@ -79,7 +82,7 @@ export function YouTubeProvider({ children }) {
           const cachedRow = cached;
           const cachedPosts = cachedSnap?.posts || [];
           const lastFullFetch = cachedSnap?.last_full_fetch_at ? new Date(cachedSnap.last_full_fetch_at) : null;
-          const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+          const weekAgo = Date.now() - 2 * 24 * 3600 * 1000; // full re-fetch if last full fetch >2 days ago
           /** Profile media/video count vs cached rows — refetch full catalog if we only have a thin slice (e.g. legacy 1-page cache). */
           const declaredMediaCount =
             plat === "instagram" || plat === "tiktok" || plat === "youtube"
@@ -122,7 +125,7 @@ export function YouTubeProvider({ children }) {
               setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
               setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
               if (isSupabaseConfigured()) {
-                upsertChannelCache(compositeKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
+                upsertChannelCache(compositeKey, entry).then(() => notifyChannelCacheUpdated()).catch((e) => console.error("[fetchChannel:ig] cache write failed", compositeKey, e?.message));
               }
               return entry;
             }
@@ -178,7 +181,10 @@ export function YouTubeProvider({ children }) {
 
           posts.sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
           const postViews = posts.reduce((s, p) => s + p.views, 0);
-          const totalV = Math.max(ch.viewCount ?? 0, postViews);
+          // For partial fetches: never let totalViews decrease — older cached posts have stale counts.
+          // A partial fetch can raise or hold the value but never lower it.
+          const cachedTotal = needsFullFetch ? 0 : (cachedSnap?.totalViews ?? 0);
+          const totalV = Math.max(ch.viewCount ?? 0, postViews, cachedTotal);
           const avgV = posts.length ? Math.round(postViews / posts.length) : 0;
           const lastPost = posts[0];
 
@@ -217,11 +223,14 @@ export function YouTubeProvider({ children }) {
             last_full_fetch_at: needsFullFetch ? new Date().toISOString() : (cachedSnap?.last_full_fetch_at || null),
           };
 
-          setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
-          setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
+          // Don't overwrite state if a Sync All batch completed while this background fetch was in-flight.
+          if (!isBatchSyncingRef.current || forceRefresh) {
+            setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
+            setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
+          }
 
           if (isSupabaseConfigured()) {
-            upsertChannelCache(compositeKey, entry).then(() => notifyChannelCacheUpdated()).catch(() => {});
+            upsertChannelCache(compositeKey, entry).then(() => notifyChannelCacheUpdated()).catch((e) => console.error("[fetchChannel] cache write failed", compositeKey, e?.message));
             if (plat === "youtube" && ch?.id) updateBrandChannelYoutubeId(handle, plat, ch.id).catch(() => {});
           }
           return entry;
@@ -239,6 +248,7 @@ export function YouTubeProvider({ children }) {
   const fetchChannelBatch = useCallback(
     async (items) => {
       if (!isSupabaseConfigured()) throw new Error("Supabase required for batch sync");
+      isBatchSyncingRef.current = true;
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
       const res = await fetch(`${supabaseUrl}/functions/v1/sync-all-batch`, {
@@ -283,17 +293,15 @@ export function YouTubeProvider({ children }) {
         const added = withDaily.map((x) => x.key).filter((k) => !prev.includes(k));
         return added.length ? [...prev, ...added] : prev;
       });
-      await Promise.all(
-        withDaily.map(({ key, entry }) =>
-          upsertChannelCache(key, entry).then(() => notifyChannelCacheUpdated()).catch(() => {})
-        )
-      );
+      // One fetchBrandChannelsRows call shared across all upserts (avoids N+1 queries).
+      await upsertChannelCacheBatch(withDaily, { onNotify: notifyChannelCacheUpdated });
       for (const { key, entry } of withDaily) {
         if (entry.channel?.platform === "youtube" && entry.channel?.id) {
           const { handle, platform } = pk(key);
           updateBrandChannelYoutubeId(handle, platform, entry.channel.id).catch(() => {});
         }
       }
+      isBatchSyncingRef.current = false;
       return results;
     },
     []
@@ -349,14 +357,30 @@ function buildEntryFromVideos(ch, videos, handle, plat, cachedSnap, needsFullFet
     thumbnail: v.thumbnail,
     publishedAt: v.publishedAt,
   }));
-  const byId = new Map();
+  // Deduplicate new posts (keep highest views per id)
+  const newById = new Map();
   newPostsRaw.forEach(p => {
-    const existing = byId.get(p.id);
-    if (!existing || (p.views || 0) > (existing.views || 0)) byId.set(p.id, p);
+    const existing = newById.get(p.id);
+    if (!existing || (p.views || 0) > (existing.views || 0)) newById.set(p.id, p);
   });
-  const posts = Array.from(byId.values()).sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+  const newPosts = Array.from(newById.values());
+
+  // Merge with cached posts for partial fetches (same logic as TT/YT)
+  let posts;
+  if (needsFullFetch) {
+    posts = newPosts;
+  } else {
+    const cachedPosts = cachedSnap?.posts || [];
+    const byId = new Map(cachedPosts.map(p => [p.id, { ...p }]));
+    for (const p of newPosts) byId.set(p.id, p); // new data wins on conflict
+    posts = Array.from(byId.values());
+  }
+
+  posts.sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
   const postViews = posts.reduce((s, p) => s + p.views, 0);
-  const totalV = Math.max(ch.viewCount ?? 0, postViews);
+  // For partial fetches: never let totalViews decrease vs cached value
+  const cachedTotal = needsFullFetch ? 0 : (cachedSnap?.totalViews ?? 0);
+  const totalV = Math.max(ch.viewCount ?? 0, postViews, cachedTotal);
   const avgV = posts.length ? Math.round(postViews / posts.length) : 0;
   const lastPost = posts[0];
   const thumb = ch.thumbnail || (posts[0]?.thumbnail) || null;
