@@ -2972,6 +2972,9 @@ function App() {
     const raw = localStorage.getItem(SYNC_IN_PROGRESS_KEY);
     if (!raw) return;
     hasAttemptedResume.current = true;
+    // Never resume an interrupted sync on mobile — clear the stale key and bail.
+    const isMobileDevice = window.matchMedia("(max-width: 768px)").matches || navigator.maxTouchPoints > 1;
+    if (isMobileDevice) { localStorage.removeItem(SYNC_IN_PROGRESS_KEY); return; }
     try {
       const { startedAt } = JSON.parse(raw);
       if (Date.now() - startedAt < SYNC_IN_PROGRESS_TTL) doSyncAll(true);
@@ -2997,6 +3000,9 @@ function App() {
 
   const SYNC_KEY = "tambareni-last-auto-sync";
   useEffect(() => {
+    // Never auto-trigger a Sync All on mobile — too expensive, mobile is view-only.
+    const isMobileDevice = window.matchMedia("(max-width: 768px)").matches || navigator.maxTouchPoints > 1;
+    if (isMobileDevice) return;
     const check = () => {
       const now = new Date();
       const last = localStorage.getItem(SYNC_KEY);
@@ -3057,12 +3063,12 @@ function App() {
           </div>
           <div className="sidebar-footer">
             <div
-              style={{ fontFamily: "DM Mono", fontSize: 8, color: "#333", letterSpacing: 2 }}
+              style={{ fontFamily: "DM Mono", fontSize: 8, color: "var(--text3)", letterSpacing: 2 }}
               title="Postgres server time only: channel_cache.last_synced_at (set by DB trigger on sync) and cron_config markers. The browser only formats for display (Eastern)."
             >
               Last Refresh
               <br />
-              <span style={{ color: "var(--text3)", fontSize: 9, letterSpacing: 0 }}>{lastSync ? formatLastRefresh(lastSync) : "Never"}</span>
+              <span style={{ color: "var(--text2)", fontSize: 9, letterSpacing: 0 }}>{lastSync ? formatLastRefresh(lastSync) : "Never"}</span>
             </div>
           </div>
         </div>
@@ -3074,7 +3080,10 @@ function App() {
               <img src="/tm-logo-icon.jpg" alt="" className="mobile-topbar-logo"/>
               <span className="mobile-topbar-text">TAMBARENI MEDIA ANALYTICS</span>
             </div>
-            <span className="mobile-topbar-title">{pageTitle}</span>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
+              <span className="mobile-topbar-title">{pageTitle}</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 8, color: "var(--text3)", letterSpacing: 0, lineHeight: 1.2 }}>{lastSync ? formatLastRefresh(lastSync) : "—"}</span>
+            </div>
           </div>
           {page === "overview" && (
             <div className="overview-host" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
