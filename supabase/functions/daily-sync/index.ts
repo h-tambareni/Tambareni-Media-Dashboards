@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
           videoCount = typeof mc === "number" ? mc : (mc?.count ?? 0);
           let maxId: string | null = null;
           let page = 0;
-          for (let p = 0; p < 30; p++) {
+          for (let p = 0; p < 150; p++) {
             const postsUrl = new URL(`${SC_BASE}/v2/instagram/user/posts`);
             postsUrl.searchParams.set("handle", handle);
             if (maxId) postsUrl.searchParams.set("next_max_id", maxId);
@@ -185,7 +185,12 @@ Deno.serve(async (req) => {
             const items = postsData?.items || postsData?.data || [];
             for (const it of items) {
               const b = it?.node || it;
-              totalViews += b?.play_count ?? b?.ig_play_count ?? b?.video_view_count ?? 0;
+              totalViews += Math.max(
+                Number(b?.play_count) || 0,
+                Number(b?.ig_play_count) || 0,
+                Number(b?.video_view_count) || 0,
+                Number(b?.view_count) || 0,
+              );
             }
             if (!postsData?.more_available || !items.length) break;
             maxId = postsData?.next_max_id ?? postsData?.cursor ?? null;

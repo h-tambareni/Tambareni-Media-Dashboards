@@ -77,8 +77,12 @@ function ytShareCount(v: any): number {
 function igLikeCount(base: any): number {
   return Math.max(
     coerceScInt(base?.like_count),
+    coerceScInt(base?.likes),
     coerceScInt(base?.edge_media_preview_like?.count),
     coerceScInt(base?.edge_liked_by?.count),
+    coerceScInt(base?.edge_media_to_like?.count),
+    coerceScInt(base?.likes_count),
+    coerceScInt(base?.metrics?.likes),
   );
 }
 
@@ -315,7 +319,12 @@ async function fetchIGProfile(apiKey: string, handle: string): Promise<any> {
 
 function mapIGPost(item: any, _handle: string): any {
   const base = item?.node || item;
-  const views = base?.video_view_count ?? base?.play_count ?? base?.ig_play_count ?? 0;
+  const views = Math.max(
+    coerceScInt(base?.play_count),
+    coerceScInt(base?.ig_play_count),
+    coerceScInt(base?.video_view_count),
+    coerceScInt(base?.view_count),
+  );
   const cap = base?.caption;
   const caption = (typeof cap === "string" ? cap : cap?.text ?? "") || (base?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "").slice(0, 200);
   const commentCount = base?.edge_media_to_comment?.count ?? base?.comment_count ?? 0;
