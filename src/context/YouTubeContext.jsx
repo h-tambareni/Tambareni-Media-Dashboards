@@ -102,6 +102,17 @@ export function YouTubeProvider({ children }) {
 
           let entry;
 
+          // Kick off dailySnapshots fetch early — it only needs handle+plat (no API result).
+          // We await it later when building the final entry, so it runs in parallel with profile+videos.
+          const dailyViewsPromise = isSupabaseConfigured()
+            ? fetchDailySnapshots(handle, plat).then(rows => rows.map(row => ({
+                d: formatChartDate(row.snapshot_date),
+                raw: row.snapshot_date,
+                views: row.total_views,
+                followers: row.followers ?? 0,
+              }))).catch(() => [])
+            : Promise.resolve([]);
+
           if (plat === "instagram") {
             if (!scKey && scKey !== null) throw new Error("Configure Supabase or set VITE_SCRAPECREATORS_API_KEY");
             const ch = await fetchIGProfile(scKey, handle);
@@ -111,17 +122,8 @@ export function YouTubeProvider({ children }) {
             });
             entry = buildEntryFromVideos(ch, videos, handle, plat, cachedSnap, needsFullFetch);
             if (entry) {
-              let dailyViews = [];
-              if (isSupabaseConfigured()) {
-                const hSnap = entry?.channel?.handle || entry?.platform?.handle || handle;
-                dailyViews = (await fetchDailySnapshots(hSnap, plat)).map(row => ({
-                  d: formatChartDate(row.snapshot_date),
-                  raw: row.snapshot_date,
-                  views: row.total_views,
-                  followers: row.followers ?? 0,
-                }));
-                entry = { ...entry, dailyViews };
-              }
+              const dailyViews = await dailyViewsPromise;
+              if (dailyViews.length) entry = { ...entry, dailyViews };
               setChannels((prev) => ({ ...prev, [compositeKey]: entry }));
               setConnectedHandles((prev) => prev.includes(compositeKey) ? prev : [...prev, compositeKey]);
               if (isSupabaseConfigured()) {
@@ -206,16 +208,8 @@ export function YouTubeProvider({ children }) {
             posts,
             totalViews: totalV,
           };
-          let dailyViews = [];
-          if (isSupabaseConfigured()) {
-            const snapHandle = ch?.handle || handle;
-            dailyViews = (await fetchDailySnapshots(snapHandle, plat)).map(row => ({
-              d: formatChartDate(row.snapshot_date),
-              raw: row.snapshot_date,
-              views: row.total_views,
-              followers: row.followers ?? 0,
-            }));
-          }
+          // dailyViewsPromise was kicked off earlier in parallel with profile+videos.
+          const dailyViews = await dailyViewsPromise;
 
           entry = {
             ...pendingForSnapshot,

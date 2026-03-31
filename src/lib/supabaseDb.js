@@ -18,25 +18,25 @@ export const pk = (compositeKey) => {
 
 export async function fetchBrandsWithChannels() {
   if (!isSupabaseConfigured()) return { brands: [], channelMeta: {} };
-  const { data: brandsData, error: brandsErr } = await supabase
-    .from("brands")
-    .select("id, name, color")
-    .order("created_at", { ascending: true });
-  if (brandsErr) throw brandsErr;
+  // Fetch brands and brand_channels in parallel — they don't depend on each other.
+  const [brandsResult, channelsResult] = await Promise.all([
+    supabase.from("brands").select("id, name, color").order("created_at", { ascending: true }),
+    supabase.from("brand_channels")
+      .select("brand_id, channel_handle, platform, youtube_channel_id, active, instagram_access_token")
+      .then(async (r) => {
+        if (r.error) {
+          // Fallback without 'active' column
+          return supabase.from("brand_channels")
+            .select("brand_id, channel_handle, platform, youtube_channel_id, instagram_access_token");
+        }
+        return r;
+      }),
+  ]);
+  if (brandsResult.error) throw brandsResult.error;
+  const brandsData = brandsResult.data;
   if (!brandsData?.length) return { brands: [], channelMeta: {} };
-  let channelsData;
-  const { data: d1, error: e1 } = await supabase
-    .from("brand_channels")
-    .select("brand_id, channel_handle, platform, youtube_channel_id, active, instagram_access_token");
-  if (e1) {
-    const { data: d2, error: e2 } = await supabase
-      .from("brand_channels")
-      .select("brand_id, channel_handle, platform, youtube_channel_id, instagram_access_token");
-    if (e2) throw e2;
-    channelsData = d2;
-  } else {
-    channelsData = d1;
-  }
+  if (channelsResult.error) throw channelsResult.error;
+  const channelsData = channelsResult.data;
   const byBrand = {};
   const channelMeta = {};
   const ytKeysNeedingCache = [];
@@ -270,36 +270,36 @@ function platformMatchesRow(platform, row) {
 export async function getCachedChannelWithFallback(handle, platform) {
   if (!isSupabaseConfigured()) return null;
   const composite = ck(handle, platform);
-  const tryKey = async (key) => {
-    if (!key) return null;
-    const { data } = await supabase.from("channel_cache").select(CACHE_SELECT).eq("channel_handle", key).maybeSingle();
-    return data;
-  };
-
-  let cached = await tryKey(composite);
-  if (cached?.raw_platform_json) return cached;
-
   const rawNorm = norm(handle);
-  cached = await tryKey(rawNorm);
-  if (cached?.raw_platform_json && platformMatchesRow(platform, cached)) return cached;
-
   const trimmed = (handle || "").trim().replace(/^@/, "");
-  if (trimmed && trimmed !== rawNorm) {
-    cached = await tryKey(trimmed);
-    if (cached?.raw_platform_json && platformMatchesRow(platform, cached)) return cached;
-  }
 
+  // Build all candidate keys upfront so we can batch them into one query.
+  const candidates = [composite, rawNorm];
+  if (trimmed && trimmed !== rawNorm) candidates.push(trimmed);
   if (platform === "instagram") {
     const dotless = norm(handle.replace(/\./g, ""));
-    const variantKeys = [...new Set([
-      `${dotless}::instagram`,
-      `${norm(trimmed.replace(/\./g, ""))}::instagram`,
-    ])].filter((k) => k && k !== composite);
+    const dotlessTrimmed = norm(trimmed.replace(/\./g, ""));
+    if (`${dotless}::instagram` !== composite) candidates.push(`${dotless}::instagram`);
+    if (`${dotlessTrimmed}::instagram` !== composite && dotlessTrimmed !== dotless)
+      candidates.push(`${dotlessTrimmed}::instagram`);
+  }
+  const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
 
-    for (const k of variantKeys) {
-      cached = await tryKey(k);
-      if (cached?.raw_platform_json && platformMatchesRow("instagram", cached)) return cached;
-    }
+  const { data: rows } = await supabase
+    .from("channel_cache")
+    .select(CACHE_SELECT)
+    .in("channel_handle", uniqueCandidates);
+
+  if (!rows?.length) return null;
+
+  // Check in priority order: composite first, then fallbacks with platform check.
+  const byKey = Object.fromEntries(rows.map(r => [r.channel_handle, r]));
+  for (const key of uniqueCandidates) {
+    const cached = byKey[key];
+    if (!cached?.raw_platform_json) continue;
+    // Composite key is exact match — no platform check needed.
+    if (key === composite) return cached;
+    if (platformMatchesRow(platform, cached)) return cached;
   }
   return null;
 }

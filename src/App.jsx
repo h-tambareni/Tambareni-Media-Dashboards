@@ -1121,7 +1121,7 @@ function PlatformPieSliceLabel({ cx, cy, midAngle, outerRadius, name, value, per
         {name} {pct}%
       </tspan>
       <tspan x={x} dy="1.15em" fill="#c8c4bf" fontSize={10} fontWeight={400}>
-        {fmtWhole(value)}
+        {fmt(value)}
       </tspan>
     </text>
   );
@@ -1539,7 +1539,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
   }, [syncing, dataReady, skipNumberAnim]);
   /** Hide per-platform mini until ready + not mid-sync; delay aligns with rolling digits. */
   const showPlatMini = dataReady && !syncing && platMiniReady;
-  const showChartsAndBrands = !brandsLoading;
+  const showChartsAndBrands = dataReady;
   const keyToBrand = {};
   (brandsFromDb || []).forEach(b => {
     (b.handles || []).forEach(h => {
@@ -1651,18 +1651,12 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
     });
   })();
 
-  let ytViews = 0, ttViews = 0, igViews = 0;
-  allChannels.forEach(ch => {
-    const pt = ch.platform?.platformType || ch.channel?.platform || "youtube";
-    const v = preferredChannelTotalViews(ch);
-    if (pt === "tiktok") ttViews += v;
-    else if (pt === "instagram") igViews += v;
-    else ytViews += v;
-  });
+  // Derive pie chart from the same overviewPlatBreakdown used by the mini cards
+  // so the numbers always match.
   const pieData = [];
-  if (ytViews > 0) pieData.push({ name: "YT", value: ytViews, color: "#ff6b6b" });
-  if (ttViews > 0) pieData.push({ name: "TT", value: ttViews, color: "#69c9d0" });
-  if (igViews > 0) pieData.push({ name: "IG", value: igViews, color: "#E1306C" });
+  for (const row of overviewPlatBreakdown) {
+    if (row.prefViews > 0) pieData.push({ name: row.label, value: row.prefViews, color: row.color });
+  }
   if (!pieData.length) pieData.push({ name: "—", value: 1, color: "#333" });
 
   return (
@@ -2708,6 +2702,307 @@ function Settings({ brands, brandsLoading, channelMeta, addBrand, removeBrand, a
   );
 }
 
+// ─── Web & Newsletter Page ──────────────────────────────────────────────────
+function WebNewsletter({ onAccounts }) {
+  const [gaData, setGaData] = useState(null);
+  const [gaDaily, setGaDaily] = useState([]);
+  const [gaTopPages, setGaTopPages] = useState([]);
+  const [gaTraffic, setGaTraffic] = useState([]);
+  const [gaCountries, setGaCountries] = useState([]);
+  const [gaRealtime, setGaRealtime] = useState(null);
+  const [gaLoading, setGaLoading] = useState(false);
+  const [gaError, setGaError] = useState(null);
+
+  const [bhStats, setBhStats] = useState(null);
+  const [bhLoading, setBhLoading] = useState(false);
+  const [bhError, setBhError] = useState(null);
+
+  const [gaRange, setGaRange] = useState("30d");
+  const gaRangeMap = { "7d": "7daysAgo", "30d": "30daysAgo", "90d": "90daysAgo" };
+
+  const loadGA = useCallback(async () => {
+    setGaLoading(true);
+    setGaError(null);
+    try {
+      const { fetchGAOverview, fetchGADaily, fetchGATopPages, fetchGATrafficSources, fetchGACountries, fetchGARealtime } = await import("./lib/googleAnalytics");
+      const start = gaRangeMap[gaRange] || "30daysAgo";
+      const [overview, daily, pages, traffic, countries] = await Promise.all([
+        fetchGAOverview(start).catch(() => null),
+        fetchGADaily(start).catch(() => []),
+        fetchGATopPages(start, "today", 10).catch(() => []),
+        fetchGATrafficSources(start).catch(() => []),
+        fetchGACountries(start).catch(() => []),
+      ]);
+      // Realtime is separate (doesn't take date range)
+      const rt = await fetchGARealtime().catch(() => null);
+      setGaData(overview);
+      setGaDaily(daily);
+      setGaTopPages(pages);
+      setGaTraffic(traffic);
+      setGaCountries(countries);
+      setGaRealtime(rt);
+    } catch (e) {
+      setGaError(e.message);
+    } finally {
+      setGaLoading(false);
+    }
+  }, [gaRange]);
+
+  const loadBH = useCallback(async () => {
+    setBhLoading(true);
+    setBhError(null);
+    try {
+      const { fetchSubscriberStats } = await import("./lib/beehiiv");
+      const stats = await fetchSubscriberStats();
+      setBhStats(stats);
+    } catch (e) {
+      setBhError(e.message);
+    } finally {
+      setBhLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadGA(); }, [loadGA]);
+  useEffect(() => { loadBH(); }, [loadBH]);
+
+  const gaRangeLabel = gaRange === "7d" ? "7 days" : gaRange === "90d" ? "90 days" : "30 days";
+  const totalTrafficSessions = gaTraffic.reduce((s, r) => s + (r.sessions || 0), 0);
+
+  return (
+    <div style={{ width: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="topbar" style={{ flexShrink: 0 }}>
+        <span className="topbar-title">WEB & NEWSLETTER</span>
+        <div className="tr" style={{ alignItems: "center", gap: 12 }}>
+          <button className="ibtn primary" onClick={() => { loadGA(); loadBH(); }} disabled={gaLoading || bhLoading}>
+            {gaLoading || bhLoading ? <span className="sync-loading"><Spinner/> LOADING…</span> : "⟳ REFRESH"}
+          </button>
+          <button className="ibtn" onClick={onAccounts}>Accounts</button>
+        </div>
+      </div>
+      <div className="page" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+
+        {/* ── WEBSITE ANALYTICS ─────────────────────────────────────── */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--display)", fontSize: 16, letterSpacing: 2, textTransform: "uppercase", color: "var(--text)" }}>
+              Website — matchmaxapp.com
+            </span>
+            {gaRealtime != null && (
+              <span style={{ fontSize: 11, color: "#5ec8d0", fontFamily: "var(--mono)" }}>
+                <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#5ec8d0", marginRight: 4, animation: "pulse 2s infinite" }} />
+                {gaRealtime} active now
+              </span>
+            )}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+              {["7d", "30d", "90d"].map(id => (
+                <button key={id} className={`tbtn ${gaRange === id ? "act" : ""}`} style={{ fontSize: 10, padding: "3px 8px" }} onClick={() => setGaRange(id)}>
+                  {id === "7d" ? "7 days" : id === "30d" ? "30 days" : "90 days"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {gaError && (
+            <div className="panel" style={{ padding: 16, marginBottom: 12, color: "#ff6b6b", fontSize: 12 }}>
+              GA Error: {gaError}
+              <div style={{ marginTop: 8, color: "var(--text3)", fontSize: 11 }}>
+                Make sure <code>GA_SERVICE_ACCOUNT_JSON</code> is set as a Supabase Edge Function secret and the service account has Viewer access to your GA property.
+              </div>
+            </div>
+          )}
+
+          {/* KPI Cards */}
+          <div className="krow" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+            <div className="kcard">
+              <div className="klbl">Visitors</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? fmt(gaData.activeUsers) : "—"}</div>
+              <div className="ksub">Last {gaRangeLabel}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">Page Views</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? fmt(gaData.pageViews) : "—"}</div>
+              <div className="ksub">Last {gaRangeLabel}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">Sessions</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? fmt(gaData.sessions) : "—"}</div>
+              <div className="ksub">Last {gaRangeLabel}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">Bounce Rate</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? `${(gaData.bounceRate * 100).toFixed(1)}%` : "—"}</div>
+              <div className="ksub">Last {gaRangeLabel}</div>
+            </div>
+          </div>
+
+          <div className="krow" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginTop: 8 }}>
+            <div className="kcard">
+              <div className="klbl">Avg Session</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? `${Math.round(gaData.avgSessionDuration)}s` : "—"}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">New Users</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? fmt(gaData.newUsers) : "—"}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">Events</div>
+              <div className="kval">{gaLoading ? <Spinner size={18}/> : gaData ? fmt(gaData.eventCount) : "—"}</div>
+            </div>
+          </div>
+
+          {/* Daily Chart */}
+          {gaDaily.length > 0 && (
+            <div className="panel" style={{ marginTop: 12, padding: "12px 12px 8px" }}>
+              <div className="ptitle" style={{ marginBottom: 8 }}>DAILY TRAFFIC</div>
+              <div style={{ height: 200 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={gaDaily} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                    <XAxis dataKey="dateLabel" tick={{ fontSize: 9, fill: "#888" }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 9, fill: "#888" }} tickLine={false} axisLine={false} tickFormatter={fmtWhole} />
+                    <Tooltip
+                      contentStyle={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 11 }}
+                      labelStyle={{ color: "var(--text2)" }}
+                    />
+                    <Area type="monotone" dataKey="screenPageViews" name="Page Views" fill="rgba(255,107,107,0.15)" stroke="#ff6b6b" strokeWidth={1.5} />
+                    <Line type="monotone" dataKey="activeUsers" name="Visitors" stroke="#5ec8d0" strokeWidth={1.5} dot={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Top Pages + Traffic Sources + Countries */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+            {/* Top Pages */}
+            <div className="panel" style={{ padding: "12px" }}>
+              <div className="ptitle" style={{ marginBottom: 8 }}>TOP PAGES</div>
+              {gaTopPages.length > 0 ? gaTopPages.map((p, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: 8 }} title={p.pagePath}>{p.pagePath}</span>
+                  <span style={{ fontFamily: "var(--mono)", color: "var(--text)", whiteSpace: "nowrap" }}>{fmt(p.screenPageViews)}</span>
+                </div>
+              )) : <div style={{ fontSize: 10, color: "var(--text3)" }}>{gaLoading ? "Loading…" : "No data"}</div>}
+            </div>
+
+            {/* Traffic Sources */}
+            <div className="panel" style={{ padding: "12px" }}>
+              <div className="ptitle" style={{ marginBottom: 8 }}>TRAFFIC SOURCES</div>
+              {gaTraffic.length > 0 ? gaTraffic.map((t, i) => {
+                const pct = totalTrafficSessions > 0 ? ((t.sessions / totalTrafficSessions) * 100).toFixed(1) : 0;
+                return (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ color: "var(--text2)", flex: 1 }}>{t.sessionDefaultChannelGroup}</span>
+                    <span style={{ fontFamily: "var(--mono)", color: "var(--text)", marginRight: 8 }}>{fmt(t.sessions)}</span>
+                    <span style={{ fontFamily: "var(--mono)", color: "var(--text3)", fontSize: 10, minWidth: 38, textAlign: "right" }}>{pct}%</span>
+                  </div>
+                );
+              }) : <div style={{ fontSize: 10, color: "var(--text3)" }}>{gaLoading ? "Loading…" : "No data"}</div>}
+            </div>
+
+            {/* Countries */}
+            <div className="panel" style={{ padding: "12px" }}>
+              <div className="ptitle" style={{ marginBottom: 8 }}>TOP COUNTRIES</div>
+              {gaCountries.length > 0 ? gaCountries.map((c, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ color: "var(--text2)", flex: 1 }}>{c.country}</span>
+                  <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{fmt(c.activeUsers)}</span>
+                </div>
+              )) : <div style={{ fontSize: 10, color: "var(--text3)" }}>{gaLoading ? "Loading…" : "No data"}</div>}
+            </div>
+          </div>
+
+          {/* Link to GA */}
+          <div style={{ marginTop: 8, display: "flex", gap: 12 }}>
+            <a
+              href={`https://analytics.google.com/analytics/web/#/p${import.meta.env.VITE_GA_PROPERTY_ID || ""}/reports/reportinghub`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: 11, color: "#5ec8d0", textDecoration: "none" }}
+            >
+              Open in Google Analytics →
+            </a>
+          </div>
+        </div>
+
+        {/* ── NEWSLETTER (BEEHIIV) ──────────────────────────────────── */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <span style={{ fontFamily: "var(--display)", fontSize: 16, letterSpacing: 2, textTransform: "uppercase", color: "var(--text)" }}>
+              Newsletter — Beehiiv
+            </span>
+          </div>
+
+          {bhError && (
+            <div className="panel" style={{ padding: 16, marginBottom: 12, color: "#ff6b6b", fontSize: 12 }}>
+              Beehiiv Error: {bhError}
+              <div style={{ marginTop: 8, color: "var(--text3)", fontSize: 11 }}>
+                Make sure <code>BEEHIIV_API_KEY</code> is set as a Supabase Edge Function secret and <code>beehiiv-proxy</code> is deployed.
+              </div>
+            </div>
+          )}
+
+          {/* Newsletter KPI Cards */}
+          <div className="krow" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+            <div className="kcard">
+              <div className="klbl">Total Subscribers</div>
+              <div className="kval">{bhLoading ? <Spinner size={18}/> : bhStats ? fmt(bhStats.totalCount) : "—"}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">Active</div>
+              <div className="kval" style={{ color: "#5ec8d0" }}>{bhLoading ? <Spinner size={18}/> : bhStats ? fmt(bhStats.activeCount) : "—"}</div>
+            </div>
+            <div className="kcard">
+              <div className="klbl">Inactive</div>
+              <div className="kval" style={{ color: "var(--text3)" }}>{bhLoading ? <Spinner size={18}/> : bhStats ? fmt(bhStats.inactiveCount) : "—"}</div>
+            </div>
+          </div>
+
+          {/* Recent Subscribers */}
+          {bhStats?.recentSubscribers?.length > 0 && (
+            <div className="panel" style={{ marginTop: 12, padding: "12px" }}>
+              <div className="ptitle" style={{ marginBottom: 8 }}>RECENT SUBSCRIBERS</div>
+              {bhStats.recentSubscribers.map((sub, i) => (
+                <div key={sub.id || i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ color: "var(--text)", fontFamily: "var(--mono)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 8 }}>
+                    {sub.email}
+                  </span>
+                  <span style={{
+                    fontSize: 9,
+                    padding: "2px 6px",
+                    borderRadius: 3,
+                    marginRight: 8,
+                    background: sub.status === "active" ? "rgba(94,200,208,0.15)" : "rgba(255,255,255,0.05)",
+                    color: sub.status === "active" ? "#5ec8d0" : "var(--text3)",
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                  }}>
+                    {sub.status}
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--text3)", whiteSpace: "nowrap", fontFamily: "var(--mono)" }}>
+                    {sub.created ? new Date(sub.created * 1000).toLocaleDateString() : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Link to Beehiiv */}
+          <div style={{ marginTop: 8, display: "flex", gap: 12 }}>
+            <a
+              href="https://app.beehiiv.com/dashboard"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: 11, color: "#E1306C", textDecoration: "none" }}
+            >
+              Open in Beehiiv →
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const STORAGE_KEY = "tambareni-nav";
 const BRANDS_KEY = "tambareni-brands";
 function loadNav() { try { const v = localStorage.getItem(STORAGE_KEY); if (v) { const j = JSON.parse(v); return { page: j.page || "overview", brandId: j.brandId || null }; } } catch {} return { page: "overview", brandId: null }; }
@@ -2730,7 +3025,7 @@ function App() {
     saveNav(next.page, next.brandId);
     setSidebarOpen(false);
   };
-  const pageTitle = page === "overview" ? "Social Media" : page === "matchmax" ? "MatchMax App" : page === "settings" ? "Accounts" : brands.find(b => b.id === brandId)?.name || "Brand";
+  const pageTitle = page === "overview" ? "Social Media" : page === "webnews" ? "Web & Newsletter" : page === "matchmax" ? "MatchMax App" : page === "settings" ? "Accounts" : brands.find(b => b.id === brandId)?.name || "Brand";
 
   const getBrandNameForChannel = (ch) => {
     const name = ch?.platform?.displayName || ch?.channel?.title || ch?.platform?.handle;
@@ -2753,12 +3048,9 @@ function App() {
     };
     if (isSupabaseConfigured()) {
       fetchBrandsWithChannels()
-        .then(async (res) => {
-          try {
-            await pruneOrphanChannelCaches();
-          } catch (e) {
-            console.warn("pruneOrphanChannelCaches:", e);
-          }
+        .then((res) => {
+          // Fire-and-forget — don't block initial render for housekeeping.
+          pruneOrphanChannelCaches().catch(e => console.warn("pruneOrphanChannelCaches:", e));
           loadAndRefetch(res.brands ?? [], res.channelMeta ?? {});
         })
         .catch(err => { console.error("Supabase brands load failed:", err); loadAndRefetch(loadBrandsLocal()); })
@@ -3034,6 +3326,9 @@ function App() {
               <div className={`nav-item${page==="overview"?" act":""}`} onClick={() => go("overview")}>
                 <div className="nav-dot" style={{background:"#d63031"}}/>Social Media
               </div>
+              <div className={`nav-item${page==="webnews"?" act":""}`} onClick={() => go("webnews")}>
+                <div className="nav-dot" style={{background:"#5ec8d0"}}/>Web & Newsletter
+              </div>
               <div className={`nav-item${page==="matchmax"?" act":""}`} onClick={() => go("matchmax")}>
                 <div className="nav-dot" style={{background:"#d63031"}}/>MatchMax App
               </div>
@@ -3088,6 +3383,11 @@ function App() {
           {page === "overview" && (
             <div className="overview-host" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
               <Overview onBrand={id => go("brand", id)} brandsFromDb={brands} brandsLoading={brandsLoading} syncAll={syncAll} syncing={syncing} syncProgress={syncProgress} syncElapsed={syncElapsed} lastSync={lastSync} syncErrors={syncErrors} onAccounts={() => go("settings")} />
+            </div>
+          )}
+          {page === "webnews" && (
+            <div className="overview-host" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
+              <WebNewsletter onAccounts={() => go("settings")} />
             </div>
           )}
           {page === "matchmax" && (
