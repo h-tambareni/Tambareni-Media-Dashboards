@@ -43,7 +43,6 @@ export default function LandingPage() {
             <div className="lnav-links">
               <a href="#about" className="lnav-link">About</a>
               <a href="#arms" className="lnav-link">What We Do</a>
-              <a href="#stats" className="lnav-link">Impact</a>
               <a href="mailto:contact@cameleostudio.com" className="lnav-cta">Get In Touch</a>
             </div>
           </div>
@@ -64,7 +63,7 @@ export default function LandingPage() {
             </h1>
             <p className="hero-sub">
               Cameleo Studio is a dual-arm creative and technology company.
-              We craft compelling media that grows audiences, and build software products that solve real problems.
+              We craft compelling media that grows audiences, and build software products that monetize attention.
             </p>
             <div className="hero-actions">
               <a href="#arms" className="btn-primary">See What We Do</a>
@@ -83,8 +82,8 @@ export default function LandingPage() {
               <div className="section-label">Who We Are</div>
               <h2 className="section-title">A studio built on<br /><span className="accent">adaptability.</span></h2>
               <p className="section-text">
-                Like our namesake, we adapt. Cameleo Studio operates at the intersection of creative media and technology &mdash;
-                two disciplines that move fast and reward those who can shift with the landscape. We don't just keep up.
+                Like our namesake, we adapt. Cameleo Studio operates at the intersection of creative media and technology.
+                Two disciplines that move fast and reward those who can shift with the landscape. We don't just keep up.
                 We build the tools to stay ahead.
               </p>
             </div>
@@ -95,7 +94,7 @@ export default function LandingPage() {
         <section className="section dark" id="arms">
           <div className="section-inner">
             <div className="section-label" data-anim="arms-label">
-              <span className={`fade-up${visible["arms-label"] ? " show" : ""}`}>Two Arms, One Vision</span>
+              <span className={`fade-up${visible["arms-label"] ? " show" : ""}`}>One Studio, Two Arms</span>
             </div>
             <div className="arms-grid">
               <div className={`arm-card${visible["arm-media"] ? " show" : ""}`} data-anim="arm-media">
@@ -108,14 +107,14 @@ export default function LandingPage() {
                   </svg>
                 </div>
                 <div className="arm-label">ARM 01</div>
-                <h3 className="arm-title">Media &amp; Content</h3>
+                <h3 className="arm-title">Media</h3>
                 <p className="arm-desc">
                   We produce, manage, and grow multi-platform media brands across YouTube, TikTok, Instagram, and podcasting.
-                  Our in-house analytics platform tracks every metric that matters &mdash; from daily subscriber growth
-                  to skip rates and audience retention &mdash; so content decisions are always data-driven.
+                  Our in-house analytics platform tracks every metric that matters, from daily subscriber growth
+                  to skip rates and audience retention, so content decisions are always data-driven.
                 </p>
                 <ul className="arm-list">
-                  <li>Social media brand management</li>
+                  <li>Automated AI content production</li>
                   <li>Multi-platform content strategy</li>
                   <li>Real-time analytics &amp; growth tracking</li>
                   <li>Newsletter &amp; web audience development</li>
@@ -136,10 +135,10 @@ export default function LandingPage() {
                   </svg>
                 </div>
                 <div className="arm-label">ARM 02</div>
-                <h3 className="arm-title">Technology &amp; Products</h3>
+                <h3 className="arm-title">Products</h3>
                 <p className="arm-desc">
                   We design and engineer software products from zero to launch. Our tech arm builds mobile apps,
-                  web platforms, and internal tooling &mdash; including the proprietary analytics dashboard
+                  web platforms, and internal tooling, including the proprietary analytics dashboard
                   that powers our media operations.
                 </p>
                 <ul className="arm-list">
@@ -154,57 +153,12 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ── STATS / PROOF ── */}
-        <section className="section" id="stats">
-          <div className="section-inner" data-anim="stats">
-            <div className={`fade-up${visible.stats ? " show" : ""}`}>
-              <div className="section-label">By The Numbers</div>
-              <div className="stats-grid">
-                <div className="stat-card">
-                  <div className="stat-num">5+</div>
-                  <div className="stat-label">API Integrations</div>
-                  <div className="stat-sub">YouTube, TikTok, Instagram, GA4, Beehiiv</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-num">3</div>
-                  <div className="stat-label">Platforms Tracked</div>
-                  <div className="stat-sub">Unified cross-platform analytics</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-num">24/7</div>
-                  <div className="stat-label">Automated Sync</div>
-                  <div className="stat-sub">Nightly cron pipelines, zero downtime</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-num">&lt;1s</div>
-                  <div className="stat-label">Dashboard Load</div>
-                  <div className="stat-sub">Stale-while-revalidate caching</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── TECH STACK ── */}
-        <section className="section dark" id="stack">
-          <div className="section-inner" data-anim="stack">
-            <div className={`fade-up${visible.stack ? " show" : ""}`}>
-              <div className="section-label">Built With</div>
-              <div className="stack-row">
-                {["React", "React Native", "Vite", "Supabase", "PostgreSQL", "Deno", "TypeScript", "Recharts", "Tailwind CSS", "Expo"].map((t) => (
-                  <span className="stack-tag" key={t}>{t}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
         {/* ── CTA ── */}
         <section className="section cta-section">
           <div className="section-inner" data-anim="cta">
             <div className={`fade-up${visible.cta ? " show" : ""}`}>
               <h2 className="cta-title">Let's build something together.</h2>
-              <p className="cta-sub">Whether you need a media strategy, a product built from scratch, or both &mdash; we're ready.</p>
+              <p className="cta-sub">Whether you need a media strategy, a product built from scratch, or both. We're ready.</p>
               <a href="mailto:contact@cameleostudio.com" className="btn-primary large">contact@cameleostudio.com</a>
             </div>
           </div>
