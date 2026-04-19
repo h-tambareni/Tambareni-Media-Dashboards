@@ -8,11 +8,23 @@ export default function LandingPage() {
   const [showContact, setShowContact] = useState(false);
   const [contactForm, setContactForm] = useState({ email: "", reason: "" });
   const [contactSent, setContactSent] = useState(false);
+  const [mouse, setMouse] = useState({ x: 50, y: 50 });
 
   useEffect(() => {
     const onScroll = () => setScrollY(window.scrollY);
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const onMove = (e) => {
+      setMouse({
+        x: (e.clientX / window.innerWidth) * 100,
+        y: (e.clientY / window.innerHeight) * 100,
+      });
+    };
+    window.addEventListener("mousemove", onMove, { passive: true });
+    return () => window.removeEventListener("mousemove", onMove);
   }, []);
 
   useEffect(() => {
@@ -67,27 +79,91 @@ export default function LandingPage() {
 
         {/* ── HERO ── */}
         <section className="hero">
-          <div className="hero-bg" style={{ transform: parallax(-0.3) }}>
-            <div className="hero-glow glow1" />
-            <div className="hero-glow glow2" />
-            <div className="hero-grid" />
+          {/* Chameleon-mouse reactive blob */}
+          <div
+            className="hero-blob"
+            style={{
+              background: `radial-gradient(circle at ${mouse.x}% ${mouse.y}%, rgba(214,48,49,0.35) 0%, rgba(108,92,231,0.22) 30%, rgba(0,184,148,0.15) 55%, transparent 75%)`,
+              transform: parallax(-0.15),
+            }}
+          />
+          {/* Grid + scanlines */}
+          <div className="hero-grid" style={{ transform: parallax(-0.05) }} />
+          <div className="hero-scanlines" />
+          {/* SVG grain */}
+          <svg className="hero-grain" xmlns="http://www.w3.org/2000/svg">
+            <filter id="grain-noise">
+              <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+              <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.45 0"/>
+            </filter>
+            <rect width="100%" height="100%" filter="url(#grain-noise)" />
+          </svg>
+
+          {/* Editorial index markers */}
+          <div className="hero-idx idx-tl">
+            <span className="idx-num">01</span>
+            <span className="idx-line" />
+            <span className="idx-label">EST. 2026 / NYC</span>
           </div>
+          <div className="hero-idx idx-tr">
+            <span className="idx-label">MEDIA × TECH</span>
+            <span className="idx-line" />
+            <span className="idx-num">02</span>
+          </div>
+          <div className="hero-idx idx-bl">
+            <span className="asterisk rotating">✻</span>
+            <span className="idx-label">ADAPTIVE BY DESIGN</span>
+          </div>
+          <div className="hero-idx idx-br">
+            <span className="idx-label">INDEX NO. 001</span>
+            <span className="asterisk rotating rev">✻</span>
+          </div>
+
           <div className="hero-content">
-            <div className="hero-badge">Media & Technology Studio</div>
+            <div className="hero-badge"><span className="dot" /> MEDIA &amp; TECHNOLOGY STUDIO</div>
             <h1 className="hero-title">
-              We build brands<br />
-              <span className="hero-accent">that adapt.</span>
+              <span className="ht-line ht-line-1">
+                <span className="ht-word">We</span>
+                <span className="ht-word">build</span>
+                <span className="ht-bracket">[</span>
+                <span className="ht-word ht-outline">brands</span>
+                <span className="ht-bracket">]</span>
+              </span>
+              <span className="ht-line ht-line-2">
+                <span className="ht-word ht-italic">that</span>
+                <span className="ht-shift">ADAPT</span>
+                <span className="ht-period">.</span>
+              </span>
             </h1>
             <p className="hero-sub">
-              Cameleo Studio is a dual-arm creative and technology company.
-              We craft compelling media that grows audiences, and build software products that monetize attention.
+              A dual-arm creative &amp; technology studio. We craft media that grows audiences,
+              and build products that monetize attention.
             </p>
             <div className="hero-actions">
-              <a href="#arms" className="btn-primary">See What We Do</a>
+              <a href="#arms" className="btn-primary hero-cta">
+                <span>See What We Do</span>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <polyline points="12 5 19 12 12 19" />
+                </svg>
+              </a>
             </div>
           </div>
-          <div className="hero-scroll-hint">
-            <div className="scroll-line" />
+
+          {/* Marquee strip of pillars */}
+          <div className="hero-marquee">
+            <div className="marquee-track">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <span key={i} className="marquee-group">
+                  <span className="marquee-word">Leverage</span>
+                  <span className="marquee-sep">✻</span>
+                  <span className="marquee-word">Experimentation</span>
+                  <span className="marquee-sep">✻</span>
+                  <span className="marquee-word">Adaptability</span>
+                  <span className="marquee-sep">✻</span>
+                </span>
+              ))}
+            </div>
           </div>
         </section>
 
@@ -301,42 +377,162 @@ const landingCSS = `
 }
 .lnav-cta:hover { background: #e84142; transform: translateY(-1px); }
 
-/* ── HERO ── */
+/* ── HERO (editorial / art-direction) ── */
 .hero {
   position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  overflow: hidden; padding: 120px 32px 80px;
+  overflow: hidden; padding: 140px 40px 120px;
+  background: #050505;
 }
-.hero-bg {
-  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+/* Mouse-tracking color blob (chameleon color shift) */
+.hero-blob {
+  position: absolute; inset: -20%; z-index: 0; pointer-events: none;
+  filter: blur(60px); transition: background 0.25s ease-out;
+  will-change: background, transform;
 }
-.hero-glow {
-  position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.12;
-}
-.glow1 { width: 600px; height: 600px; background: #d63031; top: -100px; right: -100px; }
-.glow2 { width: 500px; height: 500px; background: #6c5ce7; bottom: -100px; left: -100px; }
+/* Fine grid */
 .hero-grid {
-  position: absolute; inset: 0;
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
   background-image:
-    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-  background-size: 60px 60px;
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(ellipse at center, #000 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 30%, transparent 80%);
 }
-.hero-content { position: relative; z-index: 1; max-width: 720px; text-align: center; }
+/* Scanline overlay */
+.hero-scanlines {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background-image: repeating-linear-gradient(
+    0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px
+  );
+  mix-blend-mode: overlay;
+}
+/* SVG grain */
+.hero-grain {
+  position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%;
+  pointer-events: none; opacity: 0.35; mix-blend-mode: overlay;
+}
+
+/* Editorial index markers in corners */
+.hero-idx {
+  position: absolute; z-index: 3;
+  font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 2px;
+  text-transform: uppercase; color: rgba(245,242,237,0.45);
+  display: flex; align-items: center; gap: 10px;
+  pointer-events: none;
+}
+.idx-tl { top: 96px; left: 40px; }
+.idx-tr { top: 96px; right: 40px; }
+.idx-bl { bottom: 96px; left: 40px; }
+.idx-br { bottom: 96px; right: 40px; }
+.idx-num {
+  font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px;
+  color: #d63031;
+}
+.idx-line { display: inline-block; width: 36px; height: 1px; background: rgba(245,242,237,0.3); }
+.idx-label { white-space: nowrap; }
+.asterisk { font-size: 16px; color: #d63031; display: inline-block; }
+.asterisk.rotating { animation: rotate 12s linear infinite; }
+.asterisk.rotating.rev { animation-direction: reverse; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+
+/* Hero content */
+.hero-content {
+  position: relative; z-index: 4; max-width: 980px; text-align: center;
+}
 .hero-badge {
-  display: inline-block; font-family: 'DM Mono', monospace; font-size: 11px;
-  letter-spacing: 2px; text-transform: uppercase; color: #d63031;
-  border: 1px solid rgba(214,48,49,0.3); padding: 6px 16px; border-radius: 20px;
-  margin-bottom: 28px;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: 'DM Mono', monospace; font-size: 11px;
+  letter-spacing: 2.5px; text-transform: uppercase; color: #d63031;
+  border: 1px solid rgba(214,48,49,0.4); padding: 8px 18px; border-radius: 999px;
+  margin-bottom: 36px; background: rgba(214,48,49,0.05);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
+.hero-badge .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #d63031;
+  box-shadow: 0 0 0 4px rgba(214,48,49,0.2); animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(214,48,49,0.2); }
+  50% { box-shadow: 0 0 0 8px rgba(214,48,49,0); }
+}
+
+/* Massive editorial type */
 .hero-title {
-  font-family: 'Bebas Neue', sans-serif; font-size: clamp(48px, 8vw, 96px);
-  line-height: 1.0; letter-spacing: 2px; margin-bottom: 24px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(56px, 11vw, 168px);
+  line-height: 0.88; letter-spacing: 1px;
+  margin-bottom: 32px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
-.hero-accent { color: #d63031; }
+.ht-line { display: inline-flex; align-items: baseline; gap: 0.18em; flex-wrap: wrap; justify-content: center; }
+.ht-word { color: #f5f2ed; }
+.ht-bracket {
+  color: #d63031; font-weight: 400; opacity: 0.8;
+  transform: translateY(-0.03em);
+}
+.ht-outline {
+  color: transparent;
+  -webkit-text-stroke: 2px #f5f2ed;
+  text-stroke: 2px #f5f2ed;
+}
+.ht-italic {
+  font-family: 'DM Sans', sans-serif; font-style: italic; font-weight: 300;
+  font-size: 0.55em; letter-spacing: 0; text-transform: lowercase;
+  color: rgba(245,242,237,0.7); transform: translateY(-0.15em);
+}
+.ht-shift {
+  background: linear-gradient(90deg, #d63031 0%, #e8a935 25%, #00b894 50%, #6c5ce7 75%, #d63031 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: colorShift 6s ease-in-out infinite;
+}
+@keyframes colorShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.ht-period { color: #d63031; font-size: 1.2em; line-height: 0.5; margin-left: -0.1em; }
+
 .hero-sub {
-  font-size: 17px; line-height: 1.7; color: #b0ada8; max-width: 560px; margin: 0 auto 40px;
+  font-size: 18px; line-height: 1.65; color: rgba(245,242,237,0.7);
+  max-width: 560px; margin: 0 auto 44px;
+  font-weight: 300;
 }
 .hero-actions { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.hero-cta {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 16px 36px; font-size: 15px;
+}
+.hero-cta svg { transition: transform 0.2s; }
+.hero-cta:hover svg { transform: translateX(4px); }
+
+/* Marquee strip at bottom of hero */
+.hero-marquee {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+  padding: 20px 0;
+  border-top: 1px solid rgba(245,242,237,0.08);
+  border-bottom: 1px solid rgba(245,242,237,0.08);
+  background: rgba(5,5,5,0.6);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+}
+.marquee-track {
+  display: inline-flex; white-space: nowrap;
+  animation: marquee 45s linear infinite;
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee-group { display: inline-flex; align-items: center; gap: 32px; padding-right: 32px; }
+.marquee-word {
+  font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 3px;
+  color: #f5f2ed;
+}
+.marquee-sep { color: #d63031; font-size: 14px; }
 .btn-primary {
   font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 14px;
   padding: 14px 32px; border-radius: 8px;
@@ -346,17 +542,6 @@ const landingCSS = `
 }
 .btn-primary:hover { background: #e84142; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(214,48,49,0.3); }
 .btn-primary.large { font-size: 16px; padding: 18px 40px; }
-.hero-scroll-hint {
-  position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
-}
-.scroll-line {
-  width: 1px; height: 48px; background: linear-gradient(to bottom, rgba(255,255,255,0.3), transparent);
-  animation: scrollPulse 2s ease-in-out infinite;
-}
-@keyframes scrollPulse {
-  0%, 100% { opacity: 0.3; transform: scaleY(1); }
-  50% { opacity: 0.8; transform: scaleY(1.2); }
-}
 
 /* ── SECTIONS ── */
 .section { padding: 100px 32px; }
@@ -501,17 +686,23 @@ const landingCSS = `
   .arms-grid { grid-template-columns: 1fr; }
   .pillars-grid { grid-template-columns: 1fr; }
 }
+@media (max-width: 900px) {
+  .hero-idx { display: none; }
+}
 @media (max-width: 640px) {
   .lnav { padding: 12px 16px; }
   .lnav.scrolled { padding: 8px 16px; }
   .lnav-links { gap: 12px; }
   .lnav-link { display: none; }
-  .hero { padding: 100px 20px 60px; }
+  .hero { padding: 110px 20px 100px; }
+  .hero-title { gap: 0; }
+  .ht-italic { font-size: 0.5em; }
   .section { padding: 64px 20px; }
   .lfooter-inner { flex-direction: column; gap: 12px; text-align: center; }
   .lfooter-right { align-items: center; }
   .arm-card { padding: 28px 24px; }
   .contact-modal { padding: 28px; }
+  .marquee-word { font-size: 18px; }
 }
 
 /* smooth scroll */
