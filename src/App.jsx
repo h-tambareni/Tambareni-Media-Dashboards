@@ -749,8 +749,8 @@ function DailyGrowthGreyOverlay(props) {
 
 function makeDailyGrowthDualAxisLabels(mode) {
   const isTotal = mode === "total";
-  const viewsKey = isTotal ? "cumViews" : "views";
-  const followerKey = isTotal ? "cumFollowerRun" : "followerGrowth";
+  const viewsKey = isTotal ? "totalViews" : "views";
+  const followerKey = isTotal ? "totalFollowers" : "followerGrowth";
   return function DualAxisLabelsComponent(props) {
     const { formattedGraphicalItems, offset } = props;
     if (!formattedGraphicalItems?.length || !offset?.width) return null;
@@ -1084,10 +1084,29 @@ function buildWeekdayGrowthChartData(rows) {
 
 /** Merge per-channel daily growth into one series. Include today's snapshot row so the latest
  * activity day (e.g. "yesterday" after midnight cron) can render — skipping "today" dropped that delta.
+ *
+ * Each row also carries totalViews / totalFollowers — the SUM of each channel's lifetime total
+ * (with carry-forward for days a channel didn't snapshot). These drive the "Daily Total" mode
+ * and should match the KPI cards on the current day.
  */
 function buildDailyGrowthSeriesFromChannels(channels) {
   const fmtD = formatAxisDateShort;
   const byDate = {};
+
+  // Per-channel lifetime timeline keyed by raw date (for carry-forward totals).
+  const perChLifetime = (channels || []).map((ch) => {
+    const map = {};
+    (ch?.dailyViews || []).forEach((row) => {
+      const raw = row.raw || row.d;
+      if (!raw) return;
+      map[raw] = {
+        views: Math.max(0, Number(row.views) || 0),
+        followers: Math.max(0, Number(row.followers) || 0),
+      };
+    });
+    return map;
+  });
+
   (channels || []).forEach((ch) => {
     channelDailyGrowthFromSnapshots(ch.dailyViews || []).forEach(({ row, dailyGrowth, dailyFollowerGrowth }) => {
       const key = row.raw || row.d;
@@ -1111,7 +1130,24 @@ function buildDailyGrowthSeriesFromChannels(channels) {
     const prevStr = d0 ? previousCalendarDay(d0) : localYesterdayYyyyMmDd();
     sorted = [{ d: fmtD(prevStr), raw: prevStr, cumViews: 0, cumFollowerRun: 0 }, ...sorted];
   }
-  return fillDailyGrowthGaps(sorted);
+  const filled = fillDailyGrowthGaps(sorted);
+
+  // Compute per-day lifetime totals across all channels (carry-forward per channel on days with
+  // no snapshot). This matches the KPI card numbers on the current day.
+  const lastPerCh = perChLifetime.map(() => null);
+  filled.forEach((row) => {
+    perChLifetime.forEach((map, i) => {
+      if (map[row.raw]) lastPerCh[i] = map[row.raw];
+    });
+    let tv = 0, tf = 0;
+    for (let i = 0; i < lastPerCh.length; i++) {
+      const v = lastPerCh[i];
+      if (v) { tv += v.views; tf += v.followers; }
+    }
+    row.totalViews = tv;
+    row.totalFollowers = tf;
+  });
+  return filled;
 }
 
 /** Fill missing days in daily growth data so the chart shows smooth daily points (no gaps). */
@@ -1204,11 +1240,13 @@ function buildPerChannelDailyGrowthSeries(channels) {
     const key = `${handle.replace(/^@+/, "").toLowerCase() || "ch" + i}__${platform || "x"}`;
     chDefs.push({ key, label: channelDisplayLabel(ch), color: DAILY_CHANNEL_PALETTE[i % DAILY_CHANNEL_PALETTE.length], platform });
     const series = channelDailyGrowthFromSnapshots(ch?.dailyViews || []);
-    let runCum = 0;
     const bySortedRaw = [];
     series.forEach(({ row, dailyGrowth }) => {
-      runCum += Math.max(0, dailyGrowth || 0);
-      bySortedRaw.push({ raw: row.raw || row.d, views: Math.max(0, dailyGrowth || 0), cum: runCum });
+      bySortedRaw.push({
+        raw: row.raw || row.d,
+        views: Math.max(0, dailyGrowth || 0),            // daily delta (Growth mode)
+        total: Math.max(0, Number(row.views) || 0),      // lifetime snapshot total (Total mode)
+      });
     });
     perChannelSorted.push(bySortedRaw);
   });
@@ -1233,8 +1271,8 @@ function buildPerChannelDailyGrowthSeries(channels) {
   // Build per-channel index of raw → {views, cum} for fast lookup
   const perChannelIdx = perChannelSorted.map((arr) => Object.fromEntries(arr.map((r) => [r.raw, r])));
 
-  // Track last known cumulative per channel (for carry-forward on days with no row).
-  const lastCum = chDefs.map(() => 0);
+  // Track last known lifetime total per channel (for carry-forward on days with no snapshot).
+  const lastTotal = chDefs.map(() => 0);
 
   for (let t = startMs; t <= endMs; t += dayMs) {
     const d = new Date(t);
@@ -1244,11 +1282,11 @@ function buildPerChannelDailyGrowthSeries(channels) {
       const hit = perChannelIdx[i][raw];
       if (hit) {
         row[`${def.key}__views`] = hit.views;
-        row[`${def.key}__cum`] = hit.cum;
-        lastCum[i] = hit.cum;
+        row[`${def.key}__cum`] = hit.total;
+        lastTotal[i] = hit.total;
       } else {
         row[`${def.key}__views`] = 0;
-        row[`${def.key}__cum`] = lastCum[i];
+        row[`${def.key}__cum`] = lastTotal[i];
       }
     });
     rows.push(row);
@@ -1304,8 +1342,8 @@ function makeDailyTooltip(mode) {
             });
           })()
         : raw;
-    const views = Math.max(0, Number(isTotal ? pl.cumViews : pl.views) || 0);
-    const fg = Math.max(0, Number(isTotal ? pl.cumFollowerRun : pl.followerGrowth) || 0);
+    const views = Math.max(0, Number(isTotal ? pl.totalViews : pl.views) || 0);
+    const fg = Math.max(0, Number(isTotal ? pl.totalFollowers : pl.followerGrowth) || 0);
     const ratioText = formatTooltipViewsFollowersRatio(views, fg);
     return (
       <div style={{background:"#1a1a1a",border:"1px solid #2e2e2e",borderRadius:3,padding:"7px 10px",fontFamily:"DM Mono",fontSize:10,color:"#f0ede8"}}>
@@ -2270,7 +2308,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                       <Area
                         yAxisId="left"
                         type="monotone"
-                        dataKey={dailyChartMode === "total" ? "cumViews" : "views"}
+                        dataKey={dailyChartMode === "total" ? "totalViews" : "views"}
                         stroke={dailyChartMode === "total" ? "#ff6b6b" : "url(#gv-stroke)"}
                         strokeWidth={2}
                         fill={dailyChartMode === "total" ? "rgba(255,107,107,0.18)" : "url(#gv-fill)"}
@@ -2282,7 +2320,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                       <Line
                         yAxisId="right"
                         type="monotone"
-                        dataKey={dailyChartMode === "total" ? "cumFollowerRun" : "followerGrowth"}
+                        dataKey={dailyChartMode === "total" ? "totalFollowers" : "followerGrowth"}
                         stroke={dailyChartMode === "total" ? "#5ec8d0" : "url(#gfol-stroke)"}
                         strokeWidth={2}
                         name={dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
@@ -2757,7 +2795,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         <Area
                           yAxisId="left"
                           type="monotone"
-                          dataKey={dailyChartMode === "total" ? "cumViews" : "views"}
+                          dataKey={dailyChartMode === "total" ? "totalViews" : "views"}
                           stroke={dailyChartMode === "total" ? "#ff6b6b" : "url(#gv-brand-stroke)"}
                           strokeWidth={2}
                           fill={dailyChartMode === "total" ? "rgba(255,107,107,0.18)" : "url(#gv-brand-fill)"}
@@ -2769,7 +2807,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         <Line
                           yAxisId="right"
                           type="monotone"
-                          dataKey={dailyChartMode === "total" ? "cumFollowerRun" : "followerGrowth"}
+                          dataKey={dailyChartMode === "total" ? "totalFollowers" : "followerGrowth"}
                           stroke={dailyChartMode === "total" ? "#5ec8d0" : "url(#gfol-brand-stroke)"}
                           strokeWidth={2}
                           name={dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
