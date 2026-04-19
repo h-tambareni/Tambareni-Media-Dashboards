@@ -377,7 +377,7 @@ const landingCSS = `
 .pillars-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
 .pillar-title {
   font-family: 'Bebas Neue', sans-serif; font-size: 36px; letter-spacing: 1px;
-  color: #d63031; margin-bottom: 12px;
+  color: #f5f2ed; margin-bottom: 12px;
 }
 .pillar-desc { font-size: 14px; line-height: 1.7; color: #b0ada8; }
 
