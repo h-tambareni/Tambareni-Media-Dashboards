@@ -2133,7 +2133,7 @@ function BrandResyncButton({ dbBrand, platTab, fetchChannel, onAccounts }) {
   );
 }
 
-const BRAND_TAB_KEY = "tambareni-brand-tab";
+const BRAND_TAB_KEY = "cameleo-brand-tab";
 function BrandView({ brandId, onBack, brands, onAccounts }) {
   const { channelData, fetchChannel } = useYouTubeContext();
   const dbBrand = brands?.find(b => b.id === brandId);
@@ -3003,8 +3003,8 @@ function WebNewsletter({ onAccounts }) {
   );
 }
 
-const STORAGE_KEY = "tambareni-nav";
-const BRANDS_KEY = "tambareni-brands";
+const STORAGE_KEY = "cameleo-nav";
+const BRANDS_KEY = "cameleo-brands";
 function loadNav() { try { const v = localStorage.getItem(STORAGE_KEY); if (v) { const j = JSON.parse(v); return { page: j.page || "overview", brandId: j.brandId || null }; } } catch {} return { page: "overview", brandId: null }; }
 function saveNav(page, brandId) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ page, brandId })); } catch {} }
 function loadBrandsLocal() { try { const v = localStorage.getItem(BRANDS_KEY); if (v) return JSON.parse(v); } catch {} return []; }
@@ -3125,7 +3125,7 @@ function App() {
     });
   }, [fetchChannel]);
 
-  const SYNC_IN_PROGRESS_KEY = "tambareni-sync-in-progress";
+  const SYNC_IN_PROGRESS_KEY = "cameleo-sync-in-progress";
   const SYNC_IN_PROGRESS_TTL = 5 * 60 * 1000; // 5 min
   const [syncing, setSyncing] = useState(() => {
     try {
@@ -3163,11 +3163,11 @@ function App() {
     const onVisible = () => { if (document.visibilityState === "visible") refreshLastSync(); };
     const onCacheUpdated = () => { refreshLastSync(); };
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("tambareni-cache-updated", onCacheUpdated);
+    window.addEventListener("cameleo-cache-updated", onCacheUpdated);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("tambareni-cache-updated", onCacheUpdated);
+      window.removeEventListener("cameleo-cache-updated", onCacheUpdated);
     };
   }, [refreshLastSync]);
 
@@ -3290,7 +3290,7 @@ function App() {
     }
   }, [syncPwInput, SYNC_PASSWORD, doSyncAll]);
 
-  const SYNC_KEY = "tambareni-last-auto-sync";
+  const SYNC_KEY = "cameleo-last-auto-sync";
   useEffect(() => {
     // Never auto-trigger a Sync All on mobile — too expensive, mobile is view-only.
     const isMobileDevice = window.matchMedia("(max-width: 768px)").matches || navigator.maxTouchPoints > 1;
@@ -3319,8 +3319,8 @@ function App() {
         <div className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
           <div className="sidebar-scroll">
             <div className="logo-area">
-              <img src="/tm-logo-icon.jpg" alt="Tambareni Media" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
-              <div className="logo-text">TAMBARENI<br/>MEDIA<br/>ANALYTICS</div>
+              <img src="/logo/cameleo-logo.svg" alt="Cameleo Studio" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
+              <div className="logo-text">CAMELEO<br/>STUDIO<br/>ANALYTICS</div>
             </div>
             <div className="nav-sec">
               <div className={`nav-item${page==="overview"?" act":""}`} onClick={() => go("overview")}>
@@ -3372,8 +3372,8 @@ function App() {
           <div className="mobile-topbar">
             <button type="button" className="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">☰</button>
             <div className="mobile-topbar-brand">
-              <img src="/tm-logo-icon.jpg" alt="" className="mobile-topbar-logo"/>
-              <span className="mobile-topbar-text">TAMBARENI MEDIA ANALYTICS</span>
+              <img src="/logo/cameleo-logo.svg" alt="" className="mobile-topbar-logo"/>
+              <span className="mobile-topbar-text">CAMELEO STUDIO ANALYTICS</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
               <span className="mobile-topbar-title">{pageTitle}</span>

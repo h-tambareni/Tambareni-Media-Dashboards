@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
 
     const imgRes = await fetch(urlParam, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; TambareniMedia/1.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; CameleoStudio/1.0)",
       },
     });
 

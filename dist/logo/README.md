@@ -1,7 +1,8 @@
-# Tambareni Media Logo
+# Cameleo Studio Logo
 
-Place your logo file here as `tambareni-media-logo.png` to use it for:
-- **Browser tab (favicon)** – Currently uses `tambareni-media-logo.svg` (zoomed 10% for tab display)
-- **Sidebar branding** – Uses PNG if present, otherwise falls back to SVG
+Place your logo file here as `cameleo-logo.svg` or `cameleo-logo.png` to use it for:
+- **Browser tab (favicon)** – Uses `cameleo-logo.svg`
+- **Sidebar branding** – Uses SVG or PNG
+- **Landing page** – Full logo display
 
-Copy your logo to this folder and name it `tambareni-media-logo.png`.
+The default SVG logo is included. To use a custom PNG, add it here as `cameleo-logo.png`.

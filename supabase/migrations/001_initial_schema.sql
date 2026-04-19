@@ -1,4 +1,4 @@
--- Tambareni Media Dashboards – initial schema
+-- Cameleo Studio Dashboards – initial schema
 -- Run this in Supabase SQL Editor or via Supabase CLI
 
 -- Brands: container for grouping accounts/channels

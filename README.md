@@ -1,4 +1,4 @@
-# Tambareni Media Dashboards
+# Cameleo Studio Dashboards
 
 Media analytics dashboard for multiple brands (Instagram, YouTube, TikTok).
 
@@ -41,7 +41,7 @@ VITE_GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
 
 ### 4. Usage
 
-- **Settings → YouTube API**: Enter a channel handle (e.g. `Tambareni Careers` or `@tambarenicareers`) and click **SYNC CHANNEL**
+- **Settings → YouTube API**: Enter a channel handle and click **SYNC CHANNEL**
 - **Connect YouTube (OAuth)** for Analytics data (views over time, shares, averageViewDuration for skip rate)
 - Synced YouTube data appears in Brand View when you select the YouTube tab
 
@@ -63,7 +63,7 @@ The **Daily Growth** chart uses `daily_snapshots` in Supabase. Rows are written 
 
 ### Server-side cron (Supabase native – no external tools)
 
-Uses Supabase’s built-in **pg_cron** + **pg_net** so no third-party services are needed.
+Uses Supabase's built-in **pg_cron** + **pg_net** so no third-party services are needed.
 
 1. Deploy the daily-sync function and set secrets:
    ```bash
@@ -76,10 +76,9 @@ Uses Supabase’s built-in **pg_cron** + **pg_net** so no third-party services a
      ```sql
      insert into cron_config (key, value) values (
        'instagram_tokens',
-       'lovelogicpodcast:YOUR_TOKEN,lovetruthspodcast:YOUR_TOKEN2,realtruthspodcast:YOUR_TOKEN3'
+       'handle1:YOUR_TOKEN,handle2:YOUR_TOKEN2'
      ) on conflict (key) do update set value = excluded.value;
      ```
-     Paste the exact string from your `.env` `VITE_INSTAGRAM_TOKENS` – no shell escaping issues.
 
 2. Push the migration (enables pg_cron and schedules the job):
    ```bash

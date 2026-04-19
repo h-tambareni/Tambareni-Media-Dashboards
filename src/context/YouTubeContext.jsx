@@ -20,7 +20,7 @@ const inFlight = new Map();
 function notifyChannelCacheUpdated() {
   try {
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("tambareni-cache-updated"));
+      window.dispatchEvent(new CustomEvent("cameleo-cache-updated"));
     }
   } catch {}
 }

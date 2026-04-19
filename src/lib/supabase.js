@@ -1,5 +1,5 @@
 /**
- * Supabase client for Tambareni Media Dashboards
+ * Supabase client for Cameleo Studio Dashboards
  * Requires VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env
  */
 import { createClient } from "@supabase/supabase-js";

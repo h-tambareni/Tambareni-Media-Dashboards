@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import { YouTubeProvider } from './context/YouTubeContext'
 import App from './App.jsx'
+import LandingPage from './LandingPage.jsx'
 
 class ErrorBoundary extends React.Component {
   state = { error: null };
@@ -20,12 +21,37 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+function Router() {
+  const [route, setRoute] = useState(() => {
+    const path = window.location.pathname;
+    if (path === '/analytics' || path === '/analytics/') return 'analytics';
+    return 'landing';
+  });
+
+  useEffect(() => {
+    const onPop = () => {
+      const path = window.location.pathname;
+      setRoute(path === '/analytics' || path === '/analytics/' ? 'analytics' : 'landing');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  if (route === 'analytics') {
+    return (
+      <YouTubeProvider>
+        <App />
+      </YouTubeProvider>
+    );
+  }
+
+  return <LandingPage />;
+}
+
 // StrictMode disabled: Recharts + ResponsiveContainer can throw removeChild errors in dev when
 // components mount twice. Production builds were unaffected.
 ReactDOM.createRoot(document.getElementById('root')).render(
   <ErrorBoundary>
-    <YouTubeProvider>
-      <App />
-    </YouTubeProvider>
+    <Router />
   </ErrorBoundary>,
 )

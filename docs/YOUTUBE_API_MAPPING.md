@@ -1,6 +1,6 @@
 # YouTube API Mapping: App Stats → API Sources
 
-This document maps every YouTube-related stat displayed in the Tambareni Media Dashboards app to the corresponding YouTube Data API v3 and YouTube Analytics API endpoints.
+This document maps every YouTube-related stat displayed in the Cameleo Studio Dashboards app to the corresponding YouTube Data API v3 and YouTube Analytics API endpoints.
 
 ---
 
