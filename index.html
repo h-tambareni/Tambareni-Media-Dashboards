@@ -19,16 +19,23 @@
   <body>
     <div id="root"></div>
     <script>
+      // Ignore known-benign errors from dev HMR (React 18 + Recharts ResponsiveContainer emits
+      // transient removeChild errors during hot reloads) and browser extensions.
+      var IGNORE_RE = /metamask|wallet|ethereum|phantom|connect.*wallet|removeChild|NotFoundError|Failed to execute .*on .*Node/i;
       window.addEventListener('error', function(e) {
-        document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Error</h2><pre>' + (e.message || e) + '</pre></div>';
+        var msg = String(e.message || (e.error && e.error.message) || '');
+        if (IGNORE_RE.test(msg)) { console.warn('[ignored]', msg); return; }
+        // Only blow away the root if React hasn't successfully rendered yet.
+        var root = document.getElementById('root');
+        if (!root || root.children.length > 0) return;
+        root.innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Error</h2><pre>' + msg + '</pre></div>';
       });
       window.addEventListener('unhandledrejection', function(e) {
         var msg = (e.reason && (e.reason.message || e.reason)) || '';
-        if (/metamask|wallet|ethereum|phantom|connect.*wallet/i.test(String(msg))) {
-          console.warn('Ignored extension error:', msg);
-          return;
-        }
-        document.getElementById('root').innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Promise Error</h2><pre>' + msg + '</pre></div>';
+        if (IGNORE_RE.test(String(msg))) { console.warn('[ignored]', msg); return; }
+        var root = document.getElementById('root');
+        if (!root || root.children.length > 0) return;
+        root.innerHTML = '<div style="padding:24px;font-family:system-ui;background:#111;color:#f5f2ed;min-height:100vh"><h2 style="color:#d63031">Promise Error</h2><pre>' + msg + '</pre></div>';
       });
     </script>
     <script type="module" src="/src/main.jsx"></script>

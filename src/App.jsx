@@ -915,6 +915,124 @@ function DailyGrowthDualAxisLabels(props) {
   );
 }
 
+/**
+ * Multi-line chart: one line per channel, either daily growth or cumulative total.
+ * Used by the Daily Growth panel when breakdown === "byAccount".
+ */
+function DailyChartByAccount({ data, channels, mode, xTicks, xTickFormatter, dgRefLineX }) {
+  if (!channels?.length) {
+    return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 12 }}>
+        No channels to display.
+      </div>
+    );
+  }
+  const yMax = perChannelYMax(data, channels, mode);
+  const suffix = mode === "total" ? "__cum" : "__views";
+
+  // Custom tooltip showing all channels for the hovered day, sorted desc.
+  const MultiTip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    const day = payload[0]?.payload?.raw || label;
+    const rows = channels
+      .map((c) => {
+        const v = payload[0]?.payload?.[`${c.key}${suffix}`] ?? 0;
+        return { label: c.label, color: c.color, v };
+      })
+      .sort((a, b) => b.v - a.v);
+    return (
+      <div style={{ background: "#0c0c0c", border: "1px solid #2e2e2e", padding: "8px 10px", borderRadius: 4, fontFamily: "DM Mono", fontSize: 10, color: "#d8d4ce", minWidth: 180 }}>
+        <div style={{ color: "#b0ada8", marginBottom: 4, fontSize: 9 }}>{day}</div>
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "1px 0" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: r.color }}>
+              <span style={{ width: 6, height: 6, borderRadius: 50, background: r.color, display: "inline-block" }} />
+              {r.label}
+            </span>
+            <span style={{ color: "#f5f2ed" }}>{fmtNum(Math.round(r.v))}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={data} margin={{ top: 18, right: 16, bottom: 6, left: 2 }}>
+        <XAxis
+          dataKey="activityRaw"
+          ticks={xTicks}
+          tickFormatter={xTickFormatter}
+          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
+          axisLine={false}
+          tickLine={false}
+          height={18}
+          interval="preserveStartEnd"
+        />
+        <YAxis
+          domain={yMax != null ? [0, yMax] : [0, "auto"]}
+          tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={fmtWhole}
+          width={44}
+        />
+        <Tooltip content={MultiTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+        {dgRefLineX && (
+          <ReferenceLine x={dgRefLineX} stroke="rgba(245,242,237,0.35)" strokeWidth={1} strokeDasharray="4 4" />
+        )}
+        {channels.map((c) => (
+          <Line
+            key={c.key}
+            type="monotone"
+            dataKey={`${c.key}${suffix}`}
+            stroke={c.color}
+            strokeWidth={1.75}
+            name={c.label}
+            dot={false}
+            activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
+            isAnimationActive={false}
+          />
+        ))}
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Small legend chip row for per-channel breakdown mode. */
+function ByAccountLegend({ channels }) {
+  if (!channels?.length) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, rowGap: 4, fontSize: 9, color: "#d8d4ce", fontFamily: "DM Mono", paddingTop: 6 }}>
+      {channels.map((c) => (
+        <span key={c.key} style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+          <span style={{ width: 7, height: 7, background: c.color, borderRadius: 50, display: "inline-block" }} />
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Toggle-button group used by the Daily chart header controls. */
+function DailyChartToggle({ options, value, onChange }) {
+  return (
+    <div style={{ display: "inline-flex", gap: 0, border: "1px solid var(--border2)", borderRadius: 4, overflow: "hidden" }}>
+      {options.map((o, i) => (
+        <button
+          key={o.id}
+          type="button"
+          className={`tbtn ${value === o.id ? "act" : ""}`}
+          style={{ fontSize: 10, padding: "3px 8px", border: "none", borderRadius: 0, borderLeft: i > 0 ? "1px solid var(--border2)" : "none" }}
+          onClick={() => onChange(o.id)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const WEEKDAY_SHORT_MON = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /** Local calendar weekday from YYYY-MM-DD (matches how chart dates are interpreted). */
@@ -1021,6 +1139,126 @@ function fillDailyGrowthGaps(sorted) {
     row.followerGrowth = i === 0 ? 0 : Math.max(0, row.cumFollowerRun - result[i - 1].cumFollowerRun);
   });
   return result;
+}
+
+/** Toggle options for the Daily Growth chart. */
+const DAILY_CHART_MODE_OPTIONS = [
+  { id: "growth", label: "Growth" },
+  { id: "total", label: "Total" },
+];
+const DAILY_CHART_BREAKDOWN_OPTIONS = [
+  { id: "overall", label: "Overall" },
+  { id: "byAccount", label: "By Account" },
+];
+
+/** Color palette used to distinguish channels when the chart is in "By Account" mode. */
+const DAILY_CHANNEL_PALETTE = [
+  "#ff6b6b", "#5ec8d0", "#e8a935", "#6c5ce7", "#00b894",
+  "#fd79a8", "#fdcb6e", "#a29bfe", "#55efc4", "#fab1a0",
+  "#74b9ff", "#ffeaa7", "#e17055", "#81ecec", "#dfe6e9",
+];
+
+/** Extract the handle string from a channel object (can be nested in several shapes). */
+function extractChannelHandle(ch) {
+  return String(ch?.channel?.handle || ch?.platform?.handle || ch?.handle || ch?.handleRaw || "");
+}
+/** Extract the platform string (normalized lowercase) from a channel object. */
+function extractChannelPlatform(ch) {
+  return String(ch?.platform?.platformType || ch?.channel?.platform || (typeof ch?.platform === "string" ? ch.platform : "") || "").toLowerCase();
+}
+
+/** Human label for a channel in the By-Account legend/tooltip. */
+function channelDisplayLabel(ch) {
+  const handle = extractChannelHandle(ch);
+  const platform = extractChannelPlatform(ch);
+  const platTag = platform === "youtube" ? "YT" : platform === "instagram" ? "IG" : platform === "tiktok" ? "TT" : platform.toUpperCase();
+  const title = ch?.channel?.title || ch?.platform?.displayName;
+  const clean = handle.replace(/^@+/, "") || title || "channel";
+  return platTag ? `@${clean} · ${platTag}` : `@${clean}`;
+}
+
+/**
+ * Build a wide-format series with one column per channel (both daily and cumulative views).
+ * Returned rows: { raw, d, activityRaw, [key]__views, [key]__cum, ... }
+ * channels: [{ key, label, color, platform }]
+ */
+function buildPerChannelDailyGrowthSeries(channels) {
+  const fmtD = formatAxisDateShort;
+  const chDefs = [];
+  const perChannelSorted = [];
+
+  (channels || []).forEach((ch, i) => {
+    const handle = extractChannelHandle(ch);
+    const platform = extractChannelPlatform(ch);
+    const key = `${handle.replace(/^@+/, "").toLowerCase() || "ch" + i}__${platform || "x"}`;
+    chDefs.push({ key, label: channelDisplayLabel(ch), color: DAILY_CHANNEL_PALETTE[i % DAILY_CHANNEL_PALETTE.length], platform });
+    const series = channelDailyGrowthFromSnapshots(ch?.dailyViews || []);
+    let runCum = 0;
+    const bySortedRaw = [];
+    series.forEach(({ row, dailyGrowth }) => {
+      runCum += Math.max(0, dailyGrowth || 0);
+      bySortedRaw.push({ raw: row.raw || row.d, views: Math.max(0, dailyGrowth || 0), cum: runCum });
+    });
+    perChannelSorted.push(bySortedRaw);
+  });
+
+  // Collect all unique dates across all channels.
+  const allDates = new Set();
+  perChannelSorted.forEach((arr) => arr.forEach((r) => allDates.add(r.raw)));
+  if (allDates.size === 0) return { data: [], channels: chDefs };
+
+  // Ensure the series extends to yesterday for continuity.
+  const sortedDates = [...allDates].sort();
+  let first = sortedDates[0];
+  let last = sortedDates[sortedDates.length - 1];
+  const yesterday = localYesterdayYyyyMmDd();
+  if (last < yesterday) last = yesterday;
+
+  const rows = [];
+  const dayMs = 86400000;
+  const startMs = new Date(first + "T12:00:00Z").getTime();
+  const endMs = new Date(last + "T12:00:00Z").getTime();
+
+  // Build per-channel index of raw → {views, cum} for fast lookup
+  const perChannelIdx = perChannelSorted.map((arr) => Object.fromEntries(arr.map((r) => [r.raw, r])));
+
+  // Track last known cumulative per channel (for carry-forward on days with no row).
+  const lastCum = chDefs.map(() => 0);
+
+  for (let t = startMs; t <= endMs; t += dayMs) {
+    const d = new Date(t);
+    const raw = d.toISOString().slice(0, 10);
+    const row = { raw, d: fmtD(raw), activityRaw: raw };
+    chDefs.forEach((def, i) => {
+      const hit = perChannelIdx[i][raw];
+      if (hit) {
+        row[`${def.key}__views`] = hit.views;
+        row[`${def.key}__cum`] = hit.cum;
+        lastCum[i] = hit.cum;
+      } else {
+        row[`${def.key}__views`] = 0;
+        row[`${def.key}__cum`] = lastCum[i];
+      }
+    });
+    rows.push(row);
+  }
+  return { data: rows, channels: chDefs };
+}
+
+/** Compute a simple rounded Y-axis max for per-channel charts. */
+function perChannelYMax(rows, channels, mode) {
+  if (!rows?.length || !channels?.length) return null;
+  let max = 0;
+  rows.forEach((r) => {
+    channels.forEach((c) => {
+      const v = r[`${c.key}__${mode === "total" ? "cum" : "views"}`];
+      if (typeof v === "number" && v > max) max = v;
+    });
+  });
+  if (max <= 0) return null;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(max)));
+  const step = magnitude / 2;
+  return Math.ceil(max / step) * step;
 }
 
 /** Tooltip only: views ÷ net follower Δ as fixed decimals; ∞ / — when undefined. */
@@ -1560,11 +1798,38 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
       localStorage.setItem("overview-dg-range", id);
     } catch {}
   }, []);
+  const [dailyChartMode, setDailyChartMode] = useState(() => {
+    try {
+      const v = localStorage.getItem("overview-dg-mode");
+      if (v && DAILY_CHART_MODE_OPTIONS.some((o) => o.id === v)) return v;
+    } catch {}
+    return "growth";
+  });
+  const persistDailyChartMode = useCallback((id) => {
+    setDailyChartMode(id);
+    try { localStorage.setItem("overview-dg-mode", id); } catch {}
+  }, []);
+  const [dailyChartBreakdown, setDailyChartBreakdown] = useState(() => {
+    try {
+      const v = localStorage.getItem("overview-dg-breakdown");
+      if (v && DAILY_CHART_BREAKDOWN_OPTIONS.some((o) => o.id === v)) return v;
+    } catch {}
+    return "overall";
+  });
+  const persistDailyChartBreakdown = useCallback((id) => {
+    setDailyChartBreakdown(id);
+    try { localStorage.setItem("overview-dg-breakdown", id); } catch {}
+  }, []);
   const viewsDataFull = useMemo(() => buildDailyGrowthSeriesFromChannels(allChannels), [allChannels]);
   const viewsData = useMemo(() => {
     const filtered = filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange);
     return annotateActivityDates(filtered);
   }, [viewsDataFull, dailyGrowthRange]);
+  const perChannelBuilt = useMemo(() => buildPerChannelDailyGrowthSeries(allChannels), [allChannels]);
+  const perChannelData = useMemo(() => {
+    const filtered = filterDailyGrowthByRange(perChannelBuilt.data, dailyGrowthRange);
+    return annotateActivityDates(filtered);
+  }, [perChannelBuilt.data, dailyGrowthRange]);
   const dgRefLineX = useMemo(() => dailyGrowthReferenceLineX(viewsData), [viewsData]);
   /** 0–1 fraction along x-axis where the reliable-snapshots cutoff falls (for stroke gradient). */
   const dgCutoffPct = useMemo(() => {
@@ -1882,11 +2147,15 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
               style={{ display: "flex", flexDirection: "column", minHeight: 0, paddingBottom: 8, paddingTop: 12 }}
             >
               <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6, marginBottom: 4 }}>
-                <span className="ptitle">DAILY GROWTH</span>
-                <span style={{ fontSize: 9, color: "#888", fontFamily: "DM Mono", whiteSpace: "nowrap" }}>
-                  <span style={{ color: "#ff6b6b" }} aria-hidden>■</span> Views (day) ·{" "}
-                  <span style={{ color: "#5ec8d0" }} aria-hidden>■</span> Followers (net/day)
-                </span>
+                <span className="ptitle">DAILY {dailyChartMode === "total" ? "TOTAL" : "GROWTH"}</span>
+                {dailyChartBreakdown === "overall" && (
+                  <span style={{ fontSize: 9, color: "#888", fontFamily: "DM Mono", whiteSpace: "nowrap" }}>
+                    <span style={{ color: "#ff6b6b" }} aria-hidden>■</span> {dailyChartMode === "total" ? "Total views" : "Views (day)"} ·{" "}
+                    <span style={{ color: "#5ec8d0" }} aria-hidden>■</span> {dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
+                  </span>
+                )}
+                <DailyChartToggle options={DAILY_CHART_MODE_OPTIONS} value={dailyChartMode} onChange={persistDailyChartMode} />
+                <DailyChartToggle options={DAILY_CHART_BREAKDOWN_OPTIONS} value={dailyChartBreakdown} onChange={persistDailyChartBreakdown} />
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                   {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
                     <button
@@ -1901,7 +2170,25 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                   ))}
                 </div>
               </div>
-              {viewsData.length > 0 ? (
+              {dailyChartBreakdown === "byAccount" ? (
+                perChannelData.length > 0 ? (
+                  <>
+                    <div style={{ flex: 1, minHeight: 0 }}>
+                      <DailyChartByAccount
+                        data={perChannelData}
+                        channels={perChannelBuilt.channels}
+                        mode={dailyChartMode}
+                        xTicks={dailyGrowthXTicks}
+                        xTickFormatter={(v) => formatDailyGrowthXTick(v, perChannelData)}
+                        dgRefLineX={dgRefLineX}
+                      />
+                    </div>
+                    <ByAccountLegend channels={perChannelBuilt.channels} />
+                  </>
+                ) : (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 12 }}>Need 2+ days of data.</div>
+                )
+              ) : viewsData.length > 0 ? (
                 <div style={{ flex: 1, minHeight: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={viewsData} margin={{ top: 18, right: 44, bottom: 6, left: 2 }}>
@@ -1935,7 +2222,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                       />
                       <YAxis
                         yAxisId="left"
-                        domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
+                        domain={dailyChartMode === "total" ? [0, "auto"] : (dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"])}
                         tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                         axisLine={false}
                         tickLine={false}
@@ -1945,7 +2232,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                       <YAxis
                         yAxisId="right"
                         orientation="right"
-                        domain={dailyGrowthFollowerYMax != null ? [0, dailyGrowthFollowerYMax] : [0, "auto"]}
+                        domain={dailyChartMode === "total" ? [0, "auto"] : (dailyGrowthFollowerYMax != null ? [0, dailyGrowthFollowerYMax] : [0, "auto"])}
                         tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                         axisLine={false}
                         tickLine={false}
@@ -1965,28 +2252,28 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                       <Area
                         yAxisId="left"
                         type="monotone"
-                        dataKey="views"
-                        stroke="url(#gv-stroke)"
+                        dataKey={dailyChartMode === "total" ? "cumViews" : "views"}
+                        stroke={dailyChartMode === "total" ? "#ff6b6b" : "url(#gv-stroke)"}
                         strokeWidth={2}
-                        fill="url(#gv-fill)"
-                        name="Views (day)"
-                        dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; }}
+                        fill={dailyChartMode === "total" ? "rgba(255,107,107,0.18)" : "url(#gv-fill)"}
+                        name={dailyChartMode === "total" ? "Total views" : "Views (day)"}
+                        dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; })}
                         activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                         isAnimationActive={false}
                       />
                       <Line
                         yAxisId="right"
                         type="monotone"
-                        dataKey="followerGrowth"
-                        stroke="url(#gfol-stroke)"
+                        dataKey={dailyChartMode === "total" ? "cumFollowerRun" : "followerGrowth"}
+                        stroke={dailyChartMode === "total" ? "#5ec8d0" : "url(#gfol-stroke)"}
                         strokeWidth={2}
-                        name="Followers (net/day)"
-                        dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; }}
+                        name={dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
+                        dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; })}
                         activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                         isAnimationActive={false}
                       />
-                      <Customized component={DailyGrowthGreyOverlay} />
-                      <Customized component={DailyGrowthDualAxisLabels} />
+                      {dailyChartMode === "growth" && <Customized component={DailyGrowthGreyOverlay} />}
+                      {dailyChartMode === "growth" && <Customized component={DailyGrowthDualAxisLabels} />}
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -2203,11 +2490,39 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
     },
     [dgStorageKey]
   );
+  const dgModeKey = `brand-dg-mode-${brandId}`;
+  const dgBreakdownKey = `brand-dg-breakdown-${brandId}`;
+  const [dailyChartMode, setDailyChartMode] = useState("growth");
+  const [dailyChartBreakdown, setDailyChartBreakdown] = useState("overall");
+  useEffect(() => {
+    try {
+      const m = localStorage.getItem(dgModeKey);
+      setDailyChartMode(m && DAILY_CHART_MODE_OPTIONS.some((o) => o.id === m) ? m : "growth");
+      const b = localStorage.getItem(dgBreakdownKey);
+      setDailyChartBreakdown(b && DAILY_CHART_BREAKDOWN_OPTIONS.some((o) => o.id === b) ? b : "overall");
+    } catch {
+      setDailyChartMode("growth");
+      setDailyChartBreakdown("overall");
+    }
+  }, [dgModeKey, dgBreakdownKey]);
+  const persistDailyChartMode = useCallback((id) => {
+    setDailyChartMode(id);
+    try { localStorage.setItem(dgModeKey, id); } catch {}
+  }, [dgModeKey]);
+  const persistDailyChartBreakdown = useCallback((id) => {
+    setDailyChartBreakdown(id);
+    try { localStorage.setItem(dgBreakdownKey, id); } catch {}
+  }, [dgBreakdownKey]);
   const viewsDataFull = useMemo(() => buildDailyGrowthSeriesFromChannels(chData), [chData]);
   const viewsData = useMemo(() => {
     const filtered = filterDailyGrowthByRange(viewsDataFull, dailyGrowthRange);
     return annotateActivityDates(filtered);
   }, [viewsDataFull, dailyGrowthRange]);
+  const perChannelBuilt = useMemo(() => buildPerChannelDailyGrowthSeries(chData), [chData]);
+  const perChannelData = useMemo(() => {
+    const filtered = filterDailyGrowthByRange(perChannelBuilt.data, dailyGrowthRange);
+    return annotateActivityDates(filtered);
+  }, [perChannelBuilt.data, dailyGrowthRange]);
   const dgRefLineX = useMemo(() => dailyGrowthReferenceLineX(viewsData), [viewsData]);
   /** 0–1 fraction along x-axis where the reliable-snapshots cutoff falls (for stroke gradient). */
   const dgCutoffPct = useMemo(() => {
@@ -2319,11 +2634,15 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
             <div className="ov-dg-row" style={{ marginBottom: 14 }}>
               <div className="panel" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
                 <div className="ph" style={{ flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6 }}>
-                  <span className="ptitle">DAILY GROWTH</span>
-                  <span style={{ fontSize: 9, color: "#888", fontFamily: "DM Mono", whiteSpace: "nowrap" }}>
-                    <span style={{ color: "#ff6b6b" }} aria-hidden>■</span> Views (day) ·{" "}
-                    <span style={{ color: "#5ec8d0" }} aria-hidden>■</span> Followers (net/day)
-                  </span>
+                  <span className="ptitle">DAILY {dailyChartMode === "total" ? "TOTAL" : "GROWTH"}</span>
+                  {dailyChartBreakdown === "overall" && (
+                    <span style={{ fontSize: 9, color: "#888", fontFamily: "DM Mono", whiteSpace: "nowrap" }}>
+                      <span style={{ color: "#ff6b6b" }} aria-hidden>■</span> {dailyChartMode === "total" ? "Total views" : "Views (day)"} ·{" "}
+                      <span style={{ color: "#5ec8d0" }} aria-hidden>■</span> {dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
+                    </span>
+                  )}
+                  <DailyChartToggle options={DAILY_CHART_MODE_OPTIONS} value={dailyChartMode} onChange={persistDailyChartMode} />
+                  <DailyChartToggle options={DAILY_CHART_BREAKDOWN_OPTIONS} value={dailyChartBreakdown} onChange={persistDailyChartBreakdown} />
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                     {DAILY_GROWTH_RANGE_OPTIONS.map((o) => (
                       <button
@@ -2338,7 +2657,25 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                     ))}
                   </div>
                 </div>
-                {viewsData.length > 0 ? (
+                {dailyChartBreakdown === "byAccount" ? (
+                  perChannelData.length > 0 && perChannelBuilt.channels.length > 0 ? (
+                    <>
+                      <div style={{ flex: 1, minHeight: 0 }}>
+                        <DailyChartByAccount
+                          data={perChannelData}
+                          channels={perChannelBuilt.channels}
+                          mode={dailyChartMode}
+                          xTicks={dailyGrowthXTicks}
+                          xTickFormatter={(v) => formatDailyGrowthXTick(v, perChannelData)}
+                          dgRefLineX={dgRefLineX}
+                        />
+                      </div>
+                      <ByAccountLegend channels={perChannelBuilt.channels} />
+                    </>
+                  ) : (
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 12 }}>Need 2+ days of data.</div>
+                  )
+                ) : viewsData.length > 0 ? (
                   <div style={{ flex: 1, minHeight: 0 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={viewsData} margin={{ top: 18, right: 44, bottom: 6, left: 2 }}>
@@ -2372,7 +2709,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         />
                         <YAxis
                           yAxisId="left"
-                          domain={dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"]}
+                          domain={dailyChartMode === "total" ? [0, "auto"] : (dailyGrowthYMax != null ? [0, dailyGrowthYMax] : [0, "auto"])}
                           tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                           axisLine={false}
                           tickLine={false}
@@ -2382,7 +2719,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         <YAxis
                           yAxisId="right"
                           orientation="right"
-                          domain={dailyGrowthFollowerYMax != null ? [0, dailyGrowthFollowerYMax] : [0, "auto"]}
+                          domain={dailyChartMode === "total" ? [0, "auto"] : (dailyGrowthFollowerYMax != null ? [0, dailyGrowthFollowerYMax] : [0, "auto"])}
                           tick={{ fontFamily: "DM Mono", fontSize: 8, fill: "#888" }}
                           axisLine={false}
                           tickLine={false}
@@ -2402,28 +2739,28 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                         <Area
                           yAxisId="left"
                           type="monotone"
-                          dataKey="views"
-                          stroke="url(#gv-brand-stroke)"
+                          dataKey={dailyChartMode === "total" ? "cumViews" : "views"}
+                          stroke={dailyChartMode === "total" ? "#ff6b6b" : "url(#gv-brand-stroke)"}
                           strokeWidth={2}
-                          fill="url(#gv-brand-fill)"
-                          name="Views (day)"
-                          dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; }}
+                          fill={dailyChartMode === "total" ? "rgba(255,107,107,0.18)" : "url(#gv-brand-fill)"}
+                          name={dailyChartMode === "total" ? "Total views" : "Views (day)"}
+                          dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; })}
                           activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                           isAnimationActive={false}
                         />
                         <Line
                           yAxisId="right"
                           type="monotone"
-                          dataKey="followerGrowth"
-                          stroke="url(#gfol-brand-stroke)"
+                          dataKey={dailyChartMode === "total" ? "cumFollowerRun" : "followerGrowth"}
+                          stroke={dailyChartMode === "total" ? "#5ec8d0" : "url(#gfol-brand-stroke)"}
                           strokeWidth={2}
-                          name="Followers (net/day)"
-                          dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; }}
+                          name={dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
+                          dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; })}
                           activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                           isAnimationActive={false}
                         />
-                        <Customized component={DailyGrowthGreyOverlay} />
-                        <Customized component={DailyGrowthDualAxisLabels} />
+                        {dailyChartMode === "growth" && <Customized component={DailyGrowthGreyOverlay} />}
+                        {dailyChartMode === "growth" && <Customized component={DailyGrowthDualAxisLabels} />}
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
