@@ -96,12 +96,20 @@ export default function LandingPage() {
           <div className="section-inner" data-anim="about">
             <div className={`fade-up${visible.about ? " show" : ""}`}>
               <div className="section-label">Who We Are</div>
-              <h2 className="section-title">A studio built on<br /><span className="accent">adaptability.</span></h2>
-              <p className="section-text">
-                Like our namesake, we adapt. Cameleo Studio operates at the intersection of creative media and technology.
-                Two disciplines that move fast and reward those who can shift with the landscape. We don't just keep up.
-                We build the tools to stay ahead.
-              </p>
+              <div className="pillars-grid">
+                <div className="pillar">
+                  <h3 className="pillar-title">Leverage.</h3>
+                  <p className="pillar-desc">Build systems that multiply output. One tool powers ten brands. One pipeline runs while you sleep.</p>
+                </div>
+                <div className="pillar">
+                  <h3 className="pillar-title">Experimentation.</h3>
+                  <p className="pillar-desc">Test everything. Ship fast, measure what works, kill what doesn't.</p>
+                </div>
+                <div className="pillar">
+                  <h3 className="pillar-title">Adaptability.</h3>
+                  <p className="pillar-desc">When the landscape shifts, shift with it. No attachment to what worked yesterday.</p>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -158,11 +166,11 @@ export default function LandingPage() {
                   that powers our media operations.
                 </p>
                 <ul className="arm-list">
-                  <li>Mobile app development (React Native / Expo)</li>
-                  <li>Full-stack web applications</li>
-                  <li>Custom analytics &amp; data pipelines</li>
-                  <li>API integrations &amp; serverless infrastructure</li>
-                  <li>Product design &amp; rapid prototyping</li>
+                  <li>Mobile &amp; web app development</li>
+                  <li>Custom analytics platforms</li>
+                  <li>Automated data pipelines</li>
+                  <li>Internal tooling &amp; infrastructure</li>
+                  <li>Rapid prototyping &amp; product design</li>
                 </ul>
               </div>
             </div>
@@ -365,6 +373,14 @@ const landingCSS = `
 .accent { color: #d63031; }
 .section-text { font-size: 16px; line-height: 1.8; color: #b0ada8; max-width: 640px; }
 
+/* ── PILLARS ── */
+.pillars-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+.pillar-title {
+  font-family: 'Bebas Neue', sans-serif; font-size: 36px; letter-spacing: 1px;
+  color: #d63031; margin-bottom: 12px;
+}
+.pillar-desc { font-size: 14px; line-height: 1.7; color: #b0ada8; }
+
 /* ── ARMS ── */
 .arms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 48px; }
 .arm-card {
@@ -483,6 +499,7 @@ const landingCSS = `
 /* ── RESPONSIVE ── */
 @media (max-width: 900px) {
   .arms-grid { grid-template-columns: 1fr; }
+  .pillars-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .lnav { padding: 12px 16px; }
