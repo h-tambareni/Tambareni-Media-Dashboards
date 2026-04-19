@@ -54,7 +54,7 @@ export default function LandingPage() {
         <nav className={`lnav${scrollY > 60 ? " scrolled" : ""}`}>
           <div className="lnav-inner">
             <div className="lnav-brand">
-              <img src="/logo/cameleo-logo.svg" alt="Cameleo Studio" className="lnav-logo" />
+              <img src="/logo/cameleo-logo.png" alt="Cameleo Studio" className="lnav-logo" />
               <span className="lnav-name">CAMELEO STUDIO</span>
             </div>
             <div className="lnav-links">
@@ -192,7 +192,7 @@ export default function LandingPage() {
         <footer className="lfooter">
           <div className="lfooter-inner">
             <div className="lfooter-brand">
-              <img src="/logo/cameleo-logo.svg" alt="" className="lfooter-logo" />
+              <img src="/logo/cameleo-logo.png" alt="" className="lfooter-logo" />
               <span>CAMELEO STUDIO</span>
             </div>
             <div className="lfooter-right">

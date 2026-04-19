@@ -3319,7 +3319,7 @@ function App() {
         <div className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
           <div className="sidebar-scroll">
             <div className="logo-area">
-              <img src="/logo/cameleo-logo.svg" alt="Cameleo Studio" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
+              <img src="/logo/cameleo-logo.png" alt="Cameleo Studio" style={{width:62,height:62,borderRadius:6,objectFit:"cover",marginBottom:10}}/>
               <div className="logo-text">CAMELEO<br/>STUDIO<br/>ANALYTICS</div>
             </div>
             <div className="nav-sec">
@@ -3372,7 +3372,7 @@ function App() {
           <div className="mobile-topbar">
             <button type="button" className="mobile-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">☰</button>
             <div className="mobile-topbar-brand">
-              <img src="/logo/cameleo-logo.svg" alt="" className="mobile-topbar-logo"/>
+              <img src="/logo/cameleo-logo.png" alt="" className="mobile-topbar-logo"/>
               <span className="mobile-topbar-text">CAMELEO STUDIO ANALYTICS</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
