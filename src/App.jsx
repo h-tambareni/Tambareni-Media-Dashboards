@@ -747,13 +747,21 @@ function DailyGrowthGreyOverlay(props) {
   );
 }
 
-function DailyGrowthDualAxisLabels(props) {
-  const { formattedGraphicalItems, offset } = props;
-  if (!formattedGraphicalItems?.length || !offset?.width) return null;
+function makeDailyGrowthDualAxisLabels(mode) {
+  const isTotal = mode === "total";
+  const viewsKey = isTotal ? "cumViews" : "views";
+  const followerKey = isTotal ? "cumFollowerRun" : "followerGrowth";
+  return function DualAxisLabelsComponent(props) {
+    const { formattedGraphicalItems, offset } = props;
+    if (!formattedGraphicalItems?.length || !offset?.width) return null;
 
-  const ptsViews = dailyGrowthMergePoints(formattedGraphicalItems, "views");
-  const ptsFol = dailyGrowthMergePoints(formattedGraphicalItems, "followerGrowth");
-  if (!ptsViews?.length || !ptsFol?.length || ptsViews.length !== ptsFol.length) return null;
+    const ptsViews = dailyGrowthMergePoints(formattedGraphicalItems, viewsKey);
+    const ptsFol = dailyGrowthMergePoints(formattedGraphicalItems, followerKey);
+    if (!ptsViews?.length || !ptsFol?.length || ptsViews.length !== ptsFol.length) return null;
+    return DailyGrowthDualAxisLabelsBody({ ptsViews, ptsFol, offset, viewsKey, followerKey });
+  };
+}
+function DailyGrowthDualAxisLabelsBody({ ptsViews, ptsFol, offset, viewsKey, followerKey }) {
 
   const left = offset.left;
   const top = offset.top;
@@ -846,8 +854,8 @@ function DailyGrowthDualAxisLabels(props) {
     const vy = vp.y;
     const fx = fp.x;
     const fy = fp.y;
-    const v = Math.max(0, Number(vp.payload?.views) || 0);
-    const f = Math.max(0, Number(fp.payload?.followerGrowth) || 0);
+    const v = Math.max(0, Number(vp.payload?.[viewsKey]) || 0);
+    const f = Math.max(0, Number(fp.payload?.[followerKey]) || 0);
     const vt = fmtWhole(v);
     const ft = fmtWhole(f);
     const vw = estW(vt);
@@ -914,6 +922,9 @@ function DailyGrowthDualAxisLabels(props) {
     </g>
   );
 }
+/** Backwards-compat aliases + mode-specific variants used by the Daily chart. */
+const DailyGrowthDualAxisLabels = makeDailyGrowthDualAxisLabels("growth");
+const DailyTotalDualAxisLabels = makeDailyGrowthDualAxisLabels("total");
 
 /**
  * Multi-line chart: one line per channel, either daily growth or cumulative total.
@@ -1270,44 +1281,51 @@ function formatTooltipViewsFollowersRatio(views, followerDelta) {
   return "—";
 }
 
-const TTip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  const pl = payload[0]?.payload;
-  if (!pl) return null;
-  const raw =
-    typeof label === "string" && /^\d{4}-\d{2}-\d{2}$/.test(label)
-      ? label
-      : pl?.activityRaw || pl?.raw || label;
-  const displayLabel =
-    typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)
-      ? (() => {
-          const [y, mo, da] = raw.slice(0, 10).split("-").map(Number);
-          return new Date(y, mo - 1, da).toLocaleDateString(undefined, {
-            weekday: "short",
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          });
-        })()
-      : raw;
-  const views = Math.max(0, Number(pl.views) || 0);
-  const fg = Math.max(0, Number(pl.followerGrowth) || 0);
-  const ratioText = formatTooltipViewsFollowersRatio(views, fg);
-  return (
-    <div style={{background:"#1a1a1a",border:"1px solid #2e2e2e",borderRadius:3,padding:"7px 10px",fontFamily:"DM Mono",fontSize:10,color:"#f0ede8"}}>
-      <div style={{color:"#555",marginBottom:6,fontSize:9}}>{displayLabel}</div>
-      <div style={{ color: "#ff6b6b", marginBottom: 3 }}>
-        Views (day): <span style={{ color: "#f0ede8" }}>{fmtExactCount(views)}</span>
+/** Build a Recharts tooltip component configured for either "growth" (daily delta) or "total" (cumulative) mode. */
+function makeDailyTooltip(mode) {
+  const isTotal = mode === "total";
+  return ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    const pl = payload[0]?.payload;
+    if (!pl) return null;
+    const raw =
+      typeof label === "string" && /^\d{4}-\d{2}-\d{2}$/.test(label)
+        ? label
+        : pl?.activityRaw || pl?.raw || label;
+    const displayLabel =
+      typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)
+        ? (() => {
+            const [y, mo, da] = raw.slice(0, 10).split("-").map(Number);
+            return new Date(y, mo - 1, da).toLocaleDateString(undefined, {
+              weekday: "short",
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            });
+          })()
+        : raw;
+    const views = Math.max(0, Number(isTotal ? pl.cumViews : pl.views) || 0);
+    const fg = Math.max(0, Number(isTotal ? pl.cumFollowerRun : pl.followerGrowth) || 0);
+    const ratioText = formatTooltipViewsFollowersRatio(views, fg);
+    return (
+      <div style={{background:"#1a1a1a",border:"1px solid #2e2e2e",borderRadius:3,padding:"7px 10px",fontFamily:"DM Mono",fontSize:10,color:"#f0ede8"}}>
+        <div style={{color:"#555",marginBottom:6,fontSize:9}}>{displayLabel}</div>
+        <div style={{ color: "#ff6b6b", marginBottom: 3 }}>
+          {isTotal ? "Total views" : "Views (day)"}: <span style={{ color: "#f0ede8" }}>{fmtExactCount(views)}</span>
+        </div>
+        <div style={{ color: "#5ec8d0", marginBottom: 3 }}>
+          {isTotal ? "Total followers" : "Followers (net/day)"}: <span style={{ color: "#f0ede8" }}>{fmtExactCount(fg)}</span>
+        </div>
+        <div style={{ color: "#a8a5a0", fontSize: 9, marginTop: 4, paddingTop: 6, borderTop: "1px solid #2a2a2a" }}>
+          {isTotal ? "Views / followers" : "Views / followers"}: <span style={{ color: "#f0ede8" }}>{ratioText}</span>
+        </div>
       </div>
-      <div style={{ color: "#5ec8d0", marginBottom: 3 }}>
-        Followers (net/day): <span style={{ color: "#f0ede8" }}>{fmtExactCount(fg)}</span>
-      </div>
-      <div style={{ color: "#a8a5a0", fontSize: 9, marginTop: 4, paddingTop: 6, borderTop: "1px solid #2a2a2a" }}>
-        Views / followers: <span style={{ color: "#f0ede8" }}>{ratioText}</span>
-      </div>
-    </div>
-  );
-};
+    );
+  };
+}
+/** Default (growth) tooltip kept for other call sites that don't switch modes. */
+const TTip = makeDailyTooltip("growth");
+const TTipTotal = makeDailyTooltip("total");
 
 /**
  * Labels outside the ring, centered on the slice bisector. Quadrant-based anchor + small tangent
@@ -2239,7 +2257,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         tickFormatter={fmtWhole}
                         width={36}
                       />
-                      <Tooltip content={TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                      <Tooltip content={dailyChartMode === "total" ? TTipTotal : TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
                       {dgRefLineX && (
                         <ReferenceLine
                           yAxisId="left"
@@ -2257,7 +2275,7 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         strokeWidth={2}
                         fill={dailyChartMode === "total" ? "rgba(255,107,107,0.18)" : "url(#gv-fill)"}
                         name={dailyChartMode === "total" ? "Total views" : "Views (day)"}
-                        dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; })}
+                        dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; }}
                         activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                         isAnimationActive={false}
                       />
@@ -2268,12 +2286,12 @@ function Overview({ onBrand, brandsFromDb, brandsLoading, syncAll, syncing, sync
                         stroke={dailyChartMode === "total" ? "#5ec8d0" : "url(#gfol-stroke)"}
                         strokeWidth={2}
                         name={dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
-                        dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; })}
+                        dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; }}
                         activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                         isAnimationActive={false}
                       />
                       {dailyChartMode === "growth" && <Customized component={DailyGrowthGreyOverlay} />}
-                      {dailyChartMode === "growth" && <Customized component={DailyGrowthDualAxisLabels} />}
+                      <Customized component={dailyChartMode === "total" ? DailyTotalDualAxisLabels : DailyGrowthDualAxisLabels} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -2726,7 +2744,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           tickFormatter={fmtWhole}
                           width={36}
                         />
-                        <Tooltip content={TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
+                        <Tooltip content={dailyChartMode === "total" ? TTipTotal : TTip} cursor={{ stroke: "#444", strokeWidth: 1 }} />
                         {dgRefLineX && (
                           <ReferenceLine
                             yAxisId="left"
@@ -2744,7 +2762,7 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           strokeWidth={2}
                           fill={dailyChartMode === "total" ? "rgba(255,107,107,0.18)" : "url(#gv-brand-fill)"}
                           name={dailyChartMode === "total" ? "Total views" : "Views (day)"}
-                          dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; })}
+                          dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={3} fill="#ff6b6b" />; }}
                           activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                           isAnimationActive={false}
                         />
@@ -2755,12 +2773,12 @@ function BrandView({ brandId, onBack, brands, onAccounts }) {
                           stroke={dailyChartMode === "total" ? "#5ec8d0" : "url(#gfol-brand-stroke)"}
                           strokeWidth={2}
                           name={dailyChartMode === "total" ? "Total followers" : "Followers (net/day)"}
-                          dot={dailyChartMode === "total" ? false : ((p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; })}
+                          dot={(p) => { const d = p?.payload?.activityRaw || ""; const pre = RELIABLE_SNAPSHOTS_SINCE && d < RELIABLE_SNAPSHOTS_SINCE; return pre ? <g key={p.key} /> : <circle key={p.key} cx={p.cx} cy={p.cy} r={2} fill="#5ec8d0" />; }}
                           activeDot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
                           isAnimationActive={false}
                         />
                         {dailyChartMode === "growth" && <Customized component={DailyGrowthGreyOverlay} />}
-                        {dailyChartMode === "growth" && <Customized component={DailyGrowthDualAxisLabels} />}
+                        <Customized component={dailyChartMode === "total" ? DailyTotalDualAxisLabels : DailyGrowthDualAxisLabels} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
