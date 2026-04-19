@@ -5,6 +5,9 @@ const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&
 export default function LandingPage() {
   const [scrollY, setScrollY] = useState(0);
   const [visible, setVisible] = useState({});
+  const [showContact, setShowContact] = useState(false);
+  const [contactForm, setContactForm] = useState({ email: "", reason: "" });
+  const [contactSent, setContactSent] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrollY(window.scrollY);
@@ -29,6 +32,20 @@ export default function LandingPage() {
 
   const parallax = (factor) => `translateY(${scrollY * factor}px)`;
 
+  const handleContactSubmit = (e) => {
+    e.preventDefault();
+    // Open mailto with prefilled subject/body
+    const subject = encodeURIComponent("Inquiry from " + contactForm.email);
+    const body = encodeURIComponent("From: " + contactForm.email + "\n\n" + contactForm.reason);
+    window.open(`mailto:contact@cameleostudio.com?subject=${subject}&body=${body}`, "_self");
+    setContactSent(true);
+    setTimeout(() => {
+      setShowContact(false);
+      setContactSent(false);
+      setContactForm({ email: "", reason: "" });
+    }, 2000);
+  };
+
   return (
     <>
       <style>{FONTS}{landingCSS}</style>
@@ -43,7 +60,7 @@ export default function LandingPage() {
             <div className="lnav-links">
               <a href="#about" className="lnav-link">About</a>
               <a href="#arms" className="lnav-link">What We Do</a>
-              <a href="mailto:contact@cameleostudio.com" className="lnav-cta">Get In Touch</a>
+              <button className="lnav-cta" onClick={() => setShowContact(true)}>Get In Touch</button>
             </div>
           </div>
         </nav>
@@ -56,7 +73,7 @@ export default function LandingPage() {
             <div className="hero-grid" />
           </div>
           <div className="hero-content">
-            <div className="hero-badge">Creative Studio & Technology Lab</div>
+            <div className="hero-badge">Media & Technology Studio</div>
             <h1 className="hero-title">
               We build brands<br />
               <span className="hero-accent">that adapt.</span>
@@ -67,7 +84,6 @@ export default function LandingPage() {
             </p>
             <div className="hero-actions">
               <a href="#arms" className="btn-primary">See What We Do</a>
-              <a href="mailto:contact@cameleostudio.com" className="btn-outline">Get In Touch</a>
             </div>
           </div>
           <div className="hero-scroll-hint">
@@ -159,7 +175,7 @@ export default function LandingPage() {
             <div className={`fade-up${visible.cta ? " show" : ""}`}>
               <h2 className="cta-title">Let's build something together.</h2>
               <p className="cta-sub">Whether you need a media strategy, a product built from scratch, or both. We're ready.</p>
-              <a href="mailto:contact@cameleostudio.com" className="btn-primary large">contact@cameleostudio.com</a>
+              <button className="btn-primary large" onClick={() => setShowContact(true)}>Get In Touch</button>
             </div>
           </div>
         </section>
@@ -177,6 +193,52 @@ export default function LandingPage() {
             </div>
           </div>
         </footer>
+
+        {/* ── CONTACT MODAL ── */}
+        {showContact && (
+          <div className="contact-overlay" onClick={() => !contactSent && setShowContact(false)}>
+            <div className="contact-modal" onClick={(e) => e.stopPropagation()}>
+              {contactSent ? (
+                <div className="contact-success">
+                  <div className="contact-check">&#10003;</div>
+                  <h3>Opening your email client...</h3>
+                </div>
+              ) : (
+                <>
+                  <button className="contact-close" onClick={() => setShowContact(false)}>&times;</button>
+                  <h3 className="contact-title">Get In Touch</h3>
+                  <p className="contact-sub">Drop us your email and what you're looking for.</p>
+                  <form onSubmit={handleContactSubmit}>
+                    <div className="contact-field">
+                      <label className="contact-label">Your Email</label>
+                      <input
+                        type="email"
+                        className="contact-input"
+                        placeholder="you@company.com"
+                        value={contactForm.email}
+                        onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
+                        required
+                        autoFocus
+                      />
+                    </div>
+                    <div className="contact-field">
+                      <label className="contact-label">What can we help with?</label>
+                      <textarea
+                        className="contact-input contact-textarea"
+                        placeholder="Tell us about your project or idea..."
+                        value={contactForm.reason}
+                        onChange={(e) => setContactForm({ ...contactForm, reason: e.target.value })}
+                        required
+                        rows={4}
+                      />
+                    </div>
+                    <button type="submit" className="btn-primary contact-submit">Send Message</button>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
@@ -193,6 +255,9 @@ const landingCSS = `
   min-height: 100vh;
   overflow-x: hidden;
 }
+
+/* ── GLOBAL: no underlines ── */
+.landing a, .landing button { text-decoration: none; }
 
 /* ── NAV ── */
 .lnav {
@@ -224,7 +289,7 @@ const landingCSS = `
   font-family: 'DM Mono', monospace; font-size: 12px;
   padding: 8px 18px; border-radius: 6px;
   background: #d63031; color: white; border: none; cursor: pointer;
-  letter-spacing: 0.5px; transition: all 0.2s;
+  letter-spacing: 0.5px; transition: all 0.2s; text-decoration: none;
 }
 .lnav-cta:hover { background: #e84142; transform: translateY(-1px); }
 
@@ -268,17 +333,11 @@ const landingCSS = `
   font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 14px;
   padding: 14px 32px; border-radius: 8px;
   background: #d63031; color: white; border: none; cursor: pointer;
-  transition: all 0.2s; letter-spacing: 0.3px;
+  transition: all 0.2s; letter-spacing: 0.3px; text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .btn-primary:hover { background: #e84142; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(214,48,49,0.3); }
 .btn-primary.large { font-size: 16px; padding: 18px 40px; }
-.btn-outline {
-  font-family: 'DM Sans', sans-serif; font-weight: 500; font-size: 14px;
-  padding: 14px 32px; border-radius: 8px;
-  background: transparent; color: #f5f2ed; border: 1px solid rgba(255,255,255,0.15);
-  cursor: pointer; transition: all 0.2s; text-decoration: none; display: inline-flex; align-items: center;
-}
-.btn-outline:hover { border-color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.03); }
 .hero-scroll-hint {
   position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
 }
@@ -335,31 +394,6 @@ const landingCSS = `
   width: 6px; height: 6px; border-radius: 50%; background: #d63031;
 }
 
-/* ── STATS ── */
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 48px; }
-.stat-card {
-  background: #0a0a0a; border: 1px solid #1e1e1e; border-radius: 12px;
-  padding: 32px 24px; text-align: center;
-  transition: all 0.3s;
-}
-.stat-card:hover { border-color: #2e2e2e; transform: translateY(-4px); }
-.stat-num {
-  font-family: 'Bebas Neue', sans-serif; font-size: 48px; color: #d63031;
-  line-height: 1; margin-bottom: 8px;
-}
-.stat-label { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
-.stat-sub { font-size: 11px; color: #888; line-height: 1.4; }
-
-/* ── STACK ── */
-.stack-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
-.stack-tag {
-  font-family: 'DM Mono', monospace; font-size: 12px;
-  padding: 8px 18px; border-radius: 6px;
-  background: #141414; border: 1px solid #222; color: #d8d4ce;
-  transition: all 0.2s;
-}
-.stack-tag:hover { border-color: #d63031; color: #f5f2ed; }
-
 /* ── CTA ── */
 .cta-section { text-align: center; padding: 120px 32px; position: relative; overflow: hidden; }
 .cta-title {
@@ -386,6 +420,62 @@ const landingCSS = `
 .lfooter-email:hover { color: #d63031; }
 .lfooter-copy { font-size: 12px; color: #666; }
 
+/* ── CONTACT MODAL ── */
+.contact-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.contact-modal {
+  background: #111; border: 1px solid #2e2e2e; border-radius: 16px;
+  padding: 40px; width: 100%; max-width: 480px;
+  position: relative;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+.contact-close {
+  position: absolute; top: 16px; right: 20px;
+  background: none; border: none; color: #666; font-size: 28px;
+  cursor: pointer; transition: color 0.2s; line-height: 1;
+}
+.contact-close:hover { color: #f5f2ed; }
+.contact-title {
+  font-family: 'Bebas Neue', sans-serif; font-size: 32px; letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+.contact-sub { font-size: 14px; color: #888; margin-bottom: 28px; }
+.contact-field { margin-bottom: 20px; }
+.contact-label {
+  font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 1px;
+  color: #b0ada8; text-transform: uppercase; display: block; margin-bottom: 8px;
+}
+.contact-input {
+  width: 100%; padding: 12px 16px; border-radius: 8px;
+  background: #1a1a1a; border: 1px solid #2e2e2e; color: #f5f2ed;
+  font-family: 'DM Sans', sans-serif; font-size: 14px;
+  outline: none; transition: border-color 0.2s;
+}
+.contact-input:focus { border-color: #d63031; }
+.contact-input::placeholder { color: #555; }
+.contact-textarea { resize: vertical; min-height: 100px; }
+.contact-submit { width: 100%; margin-top: 8px; }
+.contact-success {
+  text-align: center; padding: 40px 0;
+}
+.contact-check {
+  width: 56px; height: 56px; border-radius: 50%;
+  background: rgba(0,184,148,0.15); color: #00b894;
+  font-size: 28px; display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+}
+.contact-success h3 {
+  font-family: 'DM Sans', sans-serif; font-weight: 500; font-size: 16px; color: #b0ada8;
+}
+
 /* ── ANIMATIONS ── */
 .fade-up { opacity: 0; transform: translateY(30px); transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1); }
 .fade-up.show { opacity: 1; transform: translateY(0); }
@@ -393,7 +483,6 @@ const landingCSS = `
 /* ── RESPONSIVE ── */
 @media (max-width: 900px) {
   .arms-grid { grid-template-columns: 1fr; }
-  .stats-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 640px) {
   .lnav { padding: 12px 16px; }
@@ -402,9 +491,10 @@ const landingCSS = `
   .lnav-link { display: none; }
   .hero { padding: 100px 20px 60px; }
   .section { padding: 64px 20px; }
-  .stats-grid { grid-template-columns: 1fr; }
   .lfooter-inner { flex-direction: column; gap: 12px; text-align: center; }
+  .lfooter-right { align-items: center; }
   .arm-card { padding: 28px 24px; }
+  .contact-modal { padding: 28px; }
 }
 
 /* smooth scroll */
