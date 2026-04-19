@@ -37,6 +37,10 @@ function Router() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  useEffect(() => {
+    document.title = route === 'analytics' ? 'Cameleo Studio Analytics' : 'Cameleo Studio';
+  }, [route]);
+
   if (route === 'analytics') {
     return (
       <YouTubeProvider>
